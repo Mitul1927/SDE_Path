@@ -1,0 +1,132 @@
+Caching
+
+1. What is Caching?
+	storing frequently used data in a faster storage layer so future requests can avoid a slower source.
+	just look it at cache first then go to db. It saves the db from overload.
+	Main benefits - Lower latency, Fewer database queries.
+
+2. Cache Structure
+	A cache is generally a fast key-value store.
+	A cache entry can also have metadata such as: Creation time, Expiration time, Size.
+	
+3. Cache Layers
+	Caching can exist at multiple levels:
+		Browser Cache
+			Closest to the user
+			Good for - images, CSS, Js.
+		CDN Cache
+			Caches content at edge locations close to users.
+			Good for - Static files, Images/videos
+		Application Cache
+			Data stored directly in application memory.
+			Very fast, but each application instance has its own cache.
+		Distributed Cache
+			Shared cache accessible by multiple application instances.
+			Common technologies - Redis, Memcached
+			useful for - Sessions, Shared state.
+		Database Buffer Pool
+			The database itself caches frequently accessed pages in memory, reducing disk reads.
+			
+4. Cache Hit vs Cache Miss
+	when a user query to cache, if the data is in cache it's cache hit and if not it's a cache miss.
+	
+5. Cache Hit Ratio
+	Hit Ratio = percentage of requests successfully served from cache.
+	Hit Ratio = Cache Hits / Total Cache Requests
+	
+6. What Should You Cache?
+	Caching works best when data is:
+		Read frequently
+		Expensive to compute
+		Slow to retrieve
+		Relatively stable
+	Poor candidates 
+		Data that changes constantly
+		very large objects
+	80/20 Rule
+		Often, a small portion of data generates most requests.
+		Don't fill your cache with things nobody asks for. That's just renting expensive RAM for loneliness.
+		
+7. Cache Consistency
+	Biggest problem - The cache can become stale.
+	Common approaches - 
+		| Strategy             | How it works                        | Tradeoff               |
+		| -------------------- | ----------------------------------- | ---------------------- |
+		| **TTL**              | Entry expires after time            | Simple, can be stale   |
+		| **Invalidation**     | Remove/update cache when DB changes | Fresher, harder        |
+		| **Write-through**    | Update cache + DB together          | Fresher, slower writes |
+		| **Accept staleness** | Allow temporary old data            | Simple and fast        |
+8. Cache Anti-Patterns
+	1. Cache Everything
+	2. Infinite TTL
+	3. Cache as Primary Storage
+	4. Thundering Herd / Cache Stampede - If the popular entry expires then database is filled with load, to avoid it do early refresh, Background refresh.
+		
+9. Distributed Caching
+	With multiple application servers
+	A shared distributed cache prevents every application instance from having a separate copy.
+	Consistency
+		Different nodes may temporarily have different cached values.
+	Partitioning
+		Large caches are split across nodes. Consistent hashing can help distribute keys and reduce movement when nodes change.
+	Cache failure
+		need a strategy 
+			Fail Open -> Skip Cache then go to db
+			Fail closed -> return an error
+			Graceful fallback -> Serve stale data
+			
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Caching Strategies
+
+The main question behind caching strategies is: On a cache miss, who loads the data? And on a write, what gets updated first?
+
+There are 5 important strategies:
+
+Cache-Aside
+Read-Through
+Write-Through
+Write-Around
+Write-Back
+
+1. Cache-Aside / Lazy Loading
+	Application manages the cache itself.
+	if request hit the cache then return result or go to db and set in cache.
+	write - app -> db -> delete old cache entry
+	
+2. Read-Through Cache
+	The cache handles cache misses.
+	The application doesn't need to implement the "cache miss → DB → cache" logic itself.
+	cache is responsible for getting and setting of data.
+	
+3. Write-Through
+	Application writes to the cache, and the cache writes to the database before returning success.
+	This keeps cache and DB closely aligned.
+	
+4. Write-Around
+	Writes skip the cache and go directly to the database.
+	when in future there is a miss in cache, then go to db and store in cache too.
+	
+5. Write-Back / Write-Behind
+	Application writes to the cache and gets success immediately.
+	The database is updated later in the background.
+	problem - If the cache fails before the DB write happens: Data can be lost.
+	Therefore, production write-back usually needs a durable mechanism for pending writes, such as a replicated queue or write-ahead log, plus ordering, retries, deduplication, and recovery handling.
+	
+6. Quick Comparison
+	| Strategy          | Read Miss        | Write             | Speed                     | Freshness        | Main Risk               |
+	| ----------------- | ---------------- | ----------------- | ------------------------- | ---------------- | ----------------------- |
+	| **Cache-Aside**   | App → DB → Cache | DB → delete cache | Good                      | Eventually fresh | Stale cache             |
+	| **Read-Through**  | Cache → DB       | Not defined       | Good                      | Eventually fresh | Cache loader dependency |
+	| **Write-Through** | Cache → DB       | Cache → DB        | Reads fast, writes slower | **High**         | Slower writes           |
+	| **Write-Around**  | App → DB → Cache | DB only           | Writes fast               | Can be stale     | First read slow         |
+	| **Write-Back**    | App → Cache/DB   | Cache → DB later  | **Very fast writes**      | Delayed          | **Data loss**           |
+	
+7. Most Important Trade-off 
+	Speed, Freshness, Complexity.
+	There is no universally best strategy. Choose based on:
+		Read/write ratio
+		How stale data can be
+		Whether data loss is acceptable
+		Write latency requirements
+		Where you want the complexity to live.
