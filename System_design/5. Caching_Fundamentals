@@ -130,3 +130,264 @@ Write-Back
 		Whether data loss is acceptable
 		Write latency requirements
 		Where you want the complexity to live.
+		
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Cache Eviction Strategies
+
+Why eviction?
+	Cache memory is limited. When the cache is full and a new item needs to be stored, an eviction policy decides which existing item to remove.
+	
+1. LRU — Least Recently Used
+	Evict the item that was used least recently.
+	Idea: If something hasn't been used recently, it is less likely to be needed soon.
+	
+2. LFU — Least Frequently Used
+	Evict the item accessed the fewest times.
+	Idea: Keep the most popular data.
+	
+3. FIFO — First In, First Out
+	Evict the item that entered the cache first.
+	Accessing an item doesn't change its position.
+	
+4. Random Replacement (RR)
+	Evict a random item.
+	Use when: you want minimal complexity/overhead.
+	
+5. MRU — Most Recently Used
+	Evict the item used most recently.
+	Idea: The item you just used may be a one-time/temporary access and therefore less likely to be needed again soon.
+	Use when: recent access actually predicts less future reuse.
+	
+6. TTL — Time To Live
+	Remove an item after a fixed amount of time.
+	TTL is particularly useful when data freshness matters.
+	
+7. Two-Tier Caching
+	This is slightly different: instead of just deciding what to evict, you use two cache layers.
+	L1: Local cache
+		Very fast
+		Lives inside application server
+		Smaller
+		Examples: HashMap, LRU cache
+	L2: Remote cache
+		Shared between application servers
+		Larger
+		Network access required
+		Examples: Redis, Memcached
+		
+Quick comparison
+	| Strategy     | Evicts                | Main idea              | Typical use                          |
+	| ------------ | --------------------- | ---------------------- | ------------------------------------ |
+	| **LRU**      | Least recently used   | Recent = valuable      | General-purpose cache                |
+	| **LFU**      | Least frequently used | Popular = valuable     | Hot/popular data                     |
+	| **FIFO**     | Oldest item           | First in → first out   | Simple workloads                     |
+	| **Random**   | Random item           | No tracking            | Very simple/unpredictable workloads  |
+	| **MRU**      | Most recently used    | Recent = less valuable | Special workloads                    |
+	| **TTL**      | Expired item          | Freshness matters      | Time-sensitive data                  |
+	| **Two-Tier** | Depends on each layer | Local + shared cache   | High-performance distributed systems |
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Distributed Caching
+
+1. What is Distributed Caching?
+	Instead of keeping the entire cache on one server, cache data is distributed across multiple cache nodes.
+	Main reason: a single cache eventually becomes too small or becomes a bottleneck. Distributed caching allows horizontal scaling.
+	
+2. Why use it?
+	Scalability - Add more cache nodes as traffic/data grows.
+	Fault Tolerance - Failure of one node doesn't necessarily destroy the entire cache.
+	Load Balancing - Requests/data are spread across multiple nodes instead of overwhelming one machine.
+	
+3. Main Components
+	| Component              | Purpose                                    |
+	| ---------------------- | ------------------------------------------ |
+	| **Cache Nodes**        | Store cached data                          |
+	| **Cache Client**       | Connects application to cache nodes        |
+	| **Sharding**           | Splits data across nodes                   |
+	| **Consistent Hashing** | Determines which node owns a key           |
+	| **Replication**        | Keeps copies for reliability               |
+	| **Eviction**           | Removes data when cache is full            |
+	| **Coordination**       | Handles synchronization/concurrent changes |
+
+4. Consistent Hashing
+	A key is hashed to determine which cache node stores it.
+	The important benefit is that when nodes are added/removed, only a relatively small portion of keys need to move, rather than remapping everything.
+	
+5. Dedicated vs Co-located Cache
+	Dedicated - App server -> Dedicated Cache server -> DB. Cache scales independently and better for large systems. it has additional cost and network latency.
+	Co-located Cache - App and Cache in one server. Very low latency, cheaper for smaller systems. But CPU/RAM contention, limited scalabilty
+	
+6. How Distributed Caching Works
+	Flow - 
+		             Request
+				↓
+			  Cache Client
+				↓
+			Hash(key) / routing
+				↓
+			  Cache Node
+			  /         \
+		       HIT           MISS
+			↓             	↓
+		     Return         Database
+				      ↓
+				 Store in cache
+				      ↓
+                    		Return
+                    		
+7. Cache Invalidation
+	Cache can become stale when the underlying database changes.
+	Common approaches:
+		TTL → automatically expire after a period
+		Event-based invalidation → invalidate when data changes
+		Update cache when the underlying data changes
+		
+8. Cache Eviction
+	Cache memory is limited, so old/unwanted entries must be removed.
+	
+9. Major Challenges
+	Data Consistency
+		Multiple cache nodes may contain different versions of data.
+	Cache Invalidation
+		When should stale data be removed/updated?
+	Network Partitions
+		Cache nodes may temporarily lose communication.
+	Load Balancing
+		Need to prevent hot nodes and uneven data distribution.
+	Scaling
+		Adding/removing nodes can require data redistribution.
+		
+10. Popular Solutions - Redis, Memcached, Amazon EastiCache
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Content Delivery Network
+
+1. What is a CDN?
+	A CDN is a geographically distributed network of edge servers that caches and serves content close to users.
+	without cdn every request would go to the origin.
+	with cdn - request -> cdn -> origin.
+	main goals - Lower latency, Reduced origin load, Handle traffic spikes and improve availability.
+	
+2. Basic CDN Architecture
+	                 ┌── Edge Server 🇮🇳
+		         │
+	User → DNS → CDN ├── Edge Server 🇯🇵
+		         │
+		         └── Edge Server 🇺🇸
+		                 │
+		              Cache Miss
+		                 	↓
+		               Origin
+		            ┌──────────┐
+		            │   App    │
+		            │ Storage  │
+		            │   API    │
+		            └──────────┘
+		            
+	key components - 
+		| Component      | Purpose                      |
+		| -------------- | ---------------------------- |
+		| **Edge / PoP** | Server close to users        |
+		| **Origin**     | Original source of content   |
+		| **DNS**        | Helps route users toward CDN |
+		| **Cache**      | Stores content at edge       |
+
+
+3. How CDN Request Flow Works
+	1. User requests /app.js
+		  ↓
+	2. DNS → CDN
+		  ↓
+	3. Request reaches edge
+		  ↓
+	4. Check cache
+	       ↙       ↘
+	HIT         MISS
+	     ↓            	↓
+	  Return       Origin
+		       	 ↓
+		    Store in cache
+		        	↓
+		      Return
+		      
+4. What Should a CDN Cache?
+	Good candidates
+		Images
+		CSS
+		JavaScript
+		Fonts
+		Videos/video segments
+		Audio
+		Documents
+		Software/game downloads
+		Public HTML
+		Some public API responses
+	Usually poor candidates
+		Shopping carts
+		Payment flows
+		Admin pages
+		Account pages
+		Personalized/private data
+		Responses heavily dependent on login cookies
+	
+	key rule - Cache only when multiple users can safely receive the same response.
+	
+5. Cache Key
+	The cache key determines whether two requests are considered the same cached object.
+	usually - Cache Key = scheme + host + path + query parameters
+	e.g - https://cdn.example.com/image.jpg?w=800
+	possible key - https + cdn.example.com + /image.jpg + ?w=800
+	Problems
+		Key too broad: /image.jpg - Different variants may incorrectly share one response.
+		Key too narrow: /image.jpg + every cookie - Almost every request becomes unique → terrible cache hit rate.
+		
+6. HTTP Cache Headers
+	| Header                   | Meaning                              |
+	| ------------------------ | ------------------------------------ |
+	| `public`                 | Shared caches can store              |
+	| `private`                | Intended for one user                |
+	| `max-age`                | Freshness duration                   |
+	| `s-maxage`               | Freshness duration for shared caches |
+	| `no-store`               | Don't store                          |
+	| `immutable`              | Content won't change while fresh     |
+	| `stale-while-revalidate` | Serve stale while refreshing         |
+	| `ETag`                   | Version/fingerprint for validation   |
+	| `Last-Modified`          | Last modification time               |
+
+7. TTL & Cache Invalidation
+	TTL = how long cached content is considered fresh.
+	Long TTL
+		Pros: better cache hit rate, less origin traffic
+		Cons: potentially stale content
+	Short TTL
+		Pros: fresher content
+		Cons: more origin requests
+		
+	Best pattern for static assets - use versioned urls - app.v1.js, app.v2.js
+	
+8. Cache Invalidation
+	Ways to remove/update stale content:
+		TTL expiration
+		Purge a specific URL
+		Purge by cache tag
+		ETag
+		Last-Modified
+		Versioned URLs
+		stale-while-revalidate
+		
+9. CDN Benefits
+	Lower Latency
+	Less origin load
+	Traffic spike absorption
+	Better availability
+	Security
+	
+10. Major CDN Problems
+	1. Stale Content
+	2. Cache Key Bugs
+	3. Thundering Herd
+	4. Debugging Complexity
+	5. Cost
