@@ -1,0 +1,355 @@
+Pub/Sub
+
+1. What is Pub/Sub?
+	Publish-Subscribe is a messaging pattern where a publisher sends an event to a topic, and multiple independent subscribers receive their own copy.
+	                 ┌── Inventory
+		         │
+	Publisher → Topic ─── Notifications
+		         │
+		         ├── Analytics
+		         │
+		         └── Fraud Detection
+	The publisher doesn't need to know who the subscribers are.
+	main benefit - Decoupling + asynchronous processing + one-to-many communication.
+	
+2. Real-World Example
+	When an order is placed:
+		Order Service
+		     ↓
+		 OrderPlaced
+		     ↓
+		   Topic
+		 ┌───┼────┬──────┐
+		 ↓   ↓    ↓      ↓
+		Inventory Email Analytics Fraud
+	
+	The Order Service doesn't directly call four services.
+	New consumers can be added without modifying the publisher. That's the whole point of avoiding a giant chain of service-to-service calls.
+	
+3. Core Components
+	| Component        | Purpose                               |
+	| ---------------- | ------------------------------------- |
+	| **Publisher**    | Creates and publishes events          |
+	| **Topic**        | Named stream/channel receiving events |
+	| **Subscription** | Connects a consumer to a topic        |
+	| **Message**      | Contains event information            |
+	| **Subscriber**   | Consumes and processes events         |
+
+	Topic = where events are published
+	Subscription = a subscriber's own delivery state
+	
+4. Pub/Sub vs Queue
+	|                     | Work Queue      | Pub/Sub                       |
+	| ------------------- | --------------- | ----------------------------- |
+	| Message received by | One worker      | Every interested subscription |
+	| Purpose             | Distribute work | Broadcast an event            |
+	| Example             | Resize image    | User registered               |
+	| Model               | One-to-one      | One-to-many                   |
+
+	Queue: "Someone needs to do this."
+	Pub/Sub: "This happened. Whoever cares, react to it."
+	
+5. Fan-Out
+	Fan-out = one event → multiple subscriptions.
+	          OrderPlaced
+		        	↓
+		     Topic
+		┌──────┼──────┐
+		↓    	  ↓      	↓
+	    Inventory Email Analytics
+	Why useful? You can add another subscriber without changing the publisher.
+	Before: Order → Inventory + Email
+	Later: Order → Inventory + Email + Fraud + Recommendations
+	The publisher remains unchanged.
+	
+6. Message Filtering
+	A subscription can receive only messages matching certain criteria.
+	e.g - 
+		Topic: payment.events
+
+			 ┌── ledger-sub
+			 │   payment=SUCCESS
+			 │
+		Events ──┼── fraud-sub
+			 │   payment=FAILED
+			 │
+			 └── analytics-sub
+			     all payments
+	Prefer broker-level filtering when available rather than making every consumer receive and discard irrelevant messages.
+	
+7. Push vs Pull
+	Push - Broker pushes messages to subscriber. It has low latency, simple for web endpoints. Subscriber must handle bursts and endpoint must remain reachable.
+	Pull - Subscriber asks broker for messages. Consumer controls rate, Better control over batching/workers. Requires polling workers.
+	
+8. Consumer Groups / Shared Subscription
+	Fan-out and load balancing are different.
+	multiple subscriptions -> fan out
+	multiple workers same subscription -> load balancing.
+	
+9. Durability & Replay
+	Pub/Sub systems can have different message retention models.
+		Temporary - Subscriber offline -> misses message. Good for low-value live updates.
+		Durable - Subscriber offline -> Message waits -> Subscriber returns -> Processes message. Good for business events/background processing.
+		Replayable - Messages are retained and consumers can go back and process older events. useful for Reprocessing, Data pipelines, Stream processing, Recovery.
+		
+10. Event Design
+	A good event should contain enough information for safe processing.
+	e.g - 
+		{
+		  "eventId": "evt_123",
+		  "eventType": "OrderCreated",
+		  "orderId": "order_456",
+		  "timestamp": "...",
+		  "version": 1,
+		  "traceId": "...",
+		  "data": {}
+		}
+	Important fields:
+		Event ID
+		Event type
+		Entity ID
+		Timestamp
+		Version
+		Event data
+		Trace/correlation ID
+	The publisher should announce what happened, while subscribers decide what to do.
+	
+11. Event Evolution
+	Events become contracts once multiple services consume them.
+	prefer - add new field -> keep old fields -> Old consumers continue working
+	avoid casually - Rename/remove existing field -> Consumer breaks.
+	Good practices:
+		Prefer backward-compatible changes
+		Add fields rather than removing/changing them
+		Use event versions when necessary
+		Consider schema registries for large systems
+		Don't publish raw DB rows as your event contract
+		
+12. Common Patterns
+	Event Notification
+	Fan-Out → Queues
+	Event Carries State
+	Pub/Sub ≠ Event Sourcing, Event sourcing uses an append-only event log as the source of truth.
+	
+13. Popular implementations.
+	Kafka, Amazon SNS, Google Cloud Pub/Sub, Azure service Bus Topics, Redis Pub/Sub.
+	
+14. When to Use Pub/Sub
+	Use when
+		Multiple services react to the same event
+		Publisher shouldn't know consumers
+		Processing can happen asynchronously
+		Eventual consistency is acceptable
+		New consumers may be added later
+	Avoid when
+		Caller needs an immediate response
+		Only one handler exists
+		Workflow requires strict step-by-step control
+		Consumers cannot tolerate duplicates/out-of-order events
+		Nobody is monitoring subscriptions/backlogs
+		
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Message Queues
+
+1. What is a Message Queue?
+	A message queue allows one service to send work to another without waiting for it to finish.
+	Producer → Queue → Consumer instead of Service A -> Service B and it waits for response.
+	we get Service A -> Queue -> Service B. The queue acts as a buffer between producers and consumers.
+	Main benefits
+		Decouples services
+		Enables asynchronous processing
+		Absorbs traffic spikes
+		Enables retries
+		Allows independent scaling
+		Prevents slow consumers from directly blocking producers
+		
+2. Core Components
+	| Component    | Purpose                                             |
+	| ------------ | --------------------------------------------------- |
+	| **Producer** | Creates and sends messages                          |
+	| **Queue**    | Stores messages until processed                     |
+	| **Consumer** | Reads and processes messages                        |
+	| **Message**  | Unit of work                                        |
+	| **Broker**   | Manages storage, delivery, ACKs, retries, retention |
+
+	Messages should generally be small and versioned. Large files should go into object storage, with the queue message carrying a reference to the file.
+	
+3. Basic Message Flow
+	Producer Creates message -> Broker stores message -> Consumer receives message -> Consumer processes it -> Consumer ACKs message -> Broker removes message.
+	Why ACK matters , If the consumer crashes before ACK then broker retries message.
+	This is why consumers must be idempotent. The same message may be processed more than once.
+	
+4. Common Queue Patterns
+	Work Queue
+		Multiple workers share the workload. One message is normally processed by one worker.
+		Good for - emails, image processing, Reports, Background jobs
+	Pub/Sub
+		One event can reach multiple independent subscribers. Good when several services need to react to the same event.
+		This differs from a normal work queue where workers share the work.
+	Priority Queue
+			Higher-priority messages are processed first.
+			Useful when some jobs are more urgent than others.
+			Problem: low-priority jobs can starve if high-priority traffic is constant
+	Delayed / Scheduled Queue
+		Message becomes available only after a delay or at a scheduled time.
+		uses - retry later, reminder emails, Trial expiration.
+	Dead Letter Queue (DLQ)
+		Messages that repeatedly fail are moved to a separate queue.
+		DLQ prevents one poison message from repeatedly blocking normal processing.
+		
+5. Why Use Message Queues?
+	1. Decoupling
+		Producer doesn't need to know whether the consumer is currently available.
+	2. Background Processing
+		User request can finish without waiting for slow work.
+	3. Load Leveling
+		The queue absorbs the burst and lets workers catch up, assuming the delay is acceptable.
+	4. Reliability
+		Failed processing can be retried.
+	5. Independent Scaling
+	
+6. Important Failure Modes
+	Duplicate Processing
+		A message can be delivered again if: consumer crashes and ACK never reached broker. Therefore, Consumers should be idempotent.
+	Ordering
+		Don't assume global ordering.
+		Usually ordering is guaranteed only within some limited scope such as: Queue, Partition, Message Group, Key.
+	Queue Backlog
+		A growing backlog means consumers aren't keeping up.
+		Queue depth alone isn't enough. A queue with 1 million messages might be fine if consumers process 2 million/minute, while 10,000 messages could be terrible if consumers barely move.
+	Retry Storm
+		set some retry limit or jitter.
+		if 1000 workers retry immediately then it fails harder.
+		
+7. Message Design
+	A message might look like:
+		{
+		  "messageId": "msg_123",
+		  "eventType": "OrderCreated",
+		  "orderId": "order_456",
+		  "timestamp": "...",
+		  "version": 1,
+		  "traceId": "...",
+		  "payload": {}
+		}
+	Keep messages small, clear and versioned.
+	
+8. Popular systems
+	| System                   | Typical use                       |
+	| ------------------------ | --------------------------------- |
+	| **RabbitMQ**             | Traditional queues + routing      |
+	| **Amazon SQS**           | Managed cloud queues              |
+	| **Google Cloud Pub/Sub** | Managed pub/sub                   |
+	| **Azure Service Bus**    | Enterprise messaging              |
+	| **Kafka**                | Distributed event streaming / log |
+	| **Redis Streams**        | Lightweight stream processing     |
+	
+	Kafka is not simply "another RabbitMQ." Kafka is fundamentally a distributed append-only log with partitions and consumer offsets, although it can absolutely be used for queue-like workloads.
+	
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Change Data Capture (CDC)
+
+1. What is CDC?
+	capture database changes as they happen and send them to other systems.
+	Instead of repeatedly polling the database: DB → query every 5 min → find changes → copy
+	Application -> DB -> CDC -> Event Stream -> Search, Cache, Warehouse, Analytics.
+	
+2. What Does CDC Capture?
+	Usually:
+		INSERT
+		UPDATE
+		DELETE
+	A CDC event may contain:
+		| Field            | Purpose              |
+		| ---------------- | -------------------- |
+		| Operation        | Insert/update/delete |
+		| Table            | Source table         |
+		| Primary Key      | Identifies row       |
+		| Before           | Previous value       |
+		| After            | New value            |
+		| Commit position  | Position in DB log   |
+		| Timestamp        | Commit time          |
+		| Transaction info | Ordering/context     |
+
+3. CDC Pipeline
+	Database
+	   ↓
+	Capture changes
+	   ↓
+	Build CDC event
+	   ↓
+	Publish
+	   ↓
+	Kafka / Queue / Stream
+	   ↓
+	Consumers
+	   ├── Search
+	   ├── Cache
+	   ├── Warehouse
+	   └── Analytics
+	
+	Four basic steps - Capture → Build event → Publish → Consume
+	
+4. CDC Implementation Approaches
+	A. Timestamp-Based CDC
+		use something like - updated_at then periodically query where updated_at > last_sync_time;
+		pros - very simple, No special infrastructure needs
+		Cons - Hard deletes can be missed, Immediately updates can be lost, Polling ads DB load
+	B. Trigger-Based CDC
+		Database triggers write changes into an audit/outbox table.
+		pros - Can capture before/after values
+		cons - add small work to normal DB writes. Trigger maintenance is painful.
+	Use: when transaction-log access isn't available or when an outbox/audit table is appropriate.
+	
+5. Log-Based CDC
+	Reads the database's transaction log.
+	e.g 
+		MySQL       → Binlog
+		PostgreSQL  → WAL / Logical Replication
+		MongoDB     → Oplog / Change Streams
+	Application -> DB -> Transaction log -> CDC Connector -> Kafka/stream -> Consumer.
+	pros - good ordering, scales well, low impact on application writes, can resume from saved log postions
+	cons - more setup, db-specific configuration, need sufficient log retention, schema evolution needs planning.
+	Log-based CDC is usually the preferred approach for high-volume production systems.
+	
+6. Transactional Outbox + CDC
+	One of the most important patterns.
+	problem - 
+		DB write ✅
+		Kafka publish ❌
+	Now DB and event stream disagree.
+	Outbox solution - Write both in one DB transaction:
+				Transaction
+					 ├── Update business table
+					 └── Insert event into outbox
+						  ↓
+					       COMMIT
+						  ↓
+					       CDC reads outbox
+						  ↓
+						Kafka
+						  ↓
+					      Consumers
+	If the transaction rolls back:
+		Business update ❌
+		Outbox event ❌
+	Outbox solves the dual-write problem.
+	
+7. Common use cases -
+	Search Indexing - DB → CDC → Elasticsearch/OpenSearch
+	Data Warehouse - DB → CDC → Data Lake/Warehouse
+	Cache Invalidation - 
+	Read Models - A service can consume changes and build its own optimized read model.
+	Audit - Capture changes for history/debugging/compliance.
+
+8. Operational Problems
+	Initial Snapshot - Existing data must be copied first. Large tables can make snapshots expensive.
+	CDC Lag - monitor Connector Lag, Oldest unprocessed event age, Consumer lag, DLQ messages
+	Log Retention - If CDC is down too long and the database deletes the required transaction logs and it cannot resume normally so need snapshot/recovery.So log retention must cover expected outages.
+	Ordering - Source DB may provide commit ordering, but downstream partitioning and parallel consumers can change processing order. use - version numbers, commit positions, timestamps.
+	Deletes - Deletes need explicit handling: hard delete? , soft delete?, Keep for audit?, Tombstone.
+	Schema Evolution - changing or removing column can break downstream consumers. Prefer - Add new optional field, keep old fields temporarily, migrate consumers.
+	
+CDC turns committed database changes into a stream that other systems can consume, keeping them synchronized without repeatedly polling the source database.
