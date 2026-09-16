@@ -1,0 +1,65 @@
+Heartbeat
+
+1. What is a Heartbeat?
+	A heartbeat is a periodic message sent between components to indicate:
+		"I'm alive and working."
+	It is usually a small message containing information such as a timestamp or sequence number.
+	
+2. Why Do We Need Heartbeats?
+	Distributed systems cannot simply assume that a node is alive.
+	A node might: crash, Lose network connectivity, Become unresponsive, Become overload.
+	Heartbeats help with: Failure detection, Health monitoring, Failover, Recovery.
+	
+3. How Heartbeats Work
+	Two main components:
+		Heartbeat Sender - The node periodically sends a heartbeat.
+		Heartbeat Receiver / Monitor - Tracks when the last heartbeat was received.
+	The monitor can then redirect traffic, initiate failover, restart work, or alert an administrator.
+	
+4. Heartbeat Frequency
+	Heartbeat interval determines how quickly failures can be detected.
+	Frequent - Fast failure detection and more network/resource overhead
+	Infrequent - Less Overhead and slower failure detection.
+	tradeoff - Detection speed ↔ Resource usage.
+
+5. Timeout
+	The monitor needs a timeout to decide when a node is probably dead.
+	e.g - Heartbeat every 10 sec Timeout = 30 sec
+	Timeout too short - Healthy but slow node -> false failure.
+	Timeout too long - Actually failed node -> detected too late.
+	The timeout should account for expected network latency and application requirements.
+	
+6. Heartbeat Payload
+	Heartbeat doesn't have to contain only "I'm alive."
+	it can also include - 
+		{
+		  "timestamp": "...",
+		  "sequence": 12345,
+		  "load": 0.62,
+		  "version": "v2.4",
+		  "health": "healthy"
+		}
+	Possible information - Timestamp, Sequence number, Current load, Health metrics.
+
+7. Push vs Pull Heartbeats
+	Push - The node sends heartbeats to the monitor. The sender initiates the check.
+	Pull - The monitor periodically asks the node for its status. The monitor initiates the check.
+	
+8. Heartbeats vs Health Checks
+	Heartbeat - i'm still responding.
+	Health check - I'm actually healthy enough to server traffic.
+	A process can technically be alive but unable to serve requests because, for example, its database connection pool is exhausted. So in production systems, a heartbeat alone may not be sufficient to determine readiness.	
+	
+9. Challenges
+	False Positives 
+		Network delay can make a healthy node look dead.
+		Network Congestion - Too many heartbeat messages can consume network resources.
+		Resource Usage - Sending and processing heartbeats consumes CPU/network resources.
+		Split Brain - A network partition can make both sides believe the other side is dead.
+		
+10. Real-World Examples
+	Database Replication  - Primary and replicas can use heartbeats to detect failures and trigger failover.
+	Kubernetes - Kubernetes nodes periodically communicate their availability to the control plane. The control plane uses this information when tracking node health and scheduling.
+	Elasticsearch - Nodes communicate within the cluster for discovery, cluster-state coordination, and failure detection.
+	
+A heartbeat is a periodic health signal used by distributed systems to detect unresponsive nodes and trigger actions such as failover, traffic redirection, or recovery.
