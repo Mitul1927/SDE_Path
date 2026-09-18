@@ -63,3 +63,137 @@ Heartbeat
 	Elasticsearch - Nodes communicate within the cluster for discovery, cluster-state coordination, and failure detection.
 	
 A heartbeat is a periodic health signal used by distributed systems to detect unresponsive nodes and trigger actions such as failover, traffic redirection, or recovery.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Service discovery in distributed systesm
+
+1. What is Service Discovery?
+	mechanism that allows services to dynamically find and communicate with other services.
+	instead of hardcoding, payment service -> 10.20.3.45:3000, service use a Service Registry.
+	The Registry typically stores:
+		Service name
+		IP + port
+		Health/status
+		Version
+		Environment/region
+		Tags/metadata
+		Load-balancing information
+		
+2. Why do we need it?
+	In microservices, instances constantly start, stop, scale and move. Hardcoding IP addresses would become a spectacularly bad life decision.
+	Service discovery provides:
+		Less manual configuration
+		Dynamic scaling
+		Fault tolerance
+		Centralized service management
+		Ability to route traffic away from unhealthy instances
+		
+3. Service Registration
+	Before a service can be discovered, it needs to register itself.
+	Types 
+		1. Manual Registration - Developer -> Registry. Simple but bad for dynamic environments.
+		2. Self Registration - Service starts -> Registers itself -> Sends heartbeats -> Registry knows it's alive.
+		3. Sidecar registration - A separate sidecar process handles registration instead of the application.
+		4. Orchestrator-based - Platforms such as Kubernetes can automatically handle service registration and discovery through mechanisms such as Kubernetes DNS.
+		
+4. Two Types of Service Discovery
+	A. Client-Side Discovery - The client finds the service and chooses the instance.
+		Order Service -> Ask registry to Service registry -> gets IPs and call Order Service -> Choose instance for Payment Service
+		Flow
+			Payment instances register themselves.
+			Order Service queries the registry.
+			Registry returns available instances.
+			Order Service selects an instance.
+			Request goes directly to that instance.
+			
+		e.g - Netflix Eureka
+	B. Server-Side Discovery
+		The client doesn't care where the service lives.
+		Order Service -> Load Balancer/API Gateway -> Service Registry -> Payment Service Instance
+		Flow
+			Services register with registry.
+			Client sends request to Load Balancer/API Gateway.
+			Load Balancer queries registry.
+			It selects a healthy instance.
+			Request is forwarded to that instance.
+			
+5. Client vs Server-Side
+	| Feature                 | Client-Side           | Server-Side               |
+	| ----------------------- | --------------------- | ------------------------- |
+	| Who performs discovery? | Client                | Load Balancer/Gateway     |
+	| Client complexity       | Higher                | Lower                     |
+	| Load balancing          | Client                | Server                    |
+	| Network hop             | Fewer                 | Additional hop            |
+	| Centralized logic       | No                    | Yes                       |
+	| Example                 | Eureka-style approach | Load Balancer/API Gateway |
+
+6. Important Best Practices
+	High Availability - Don't make the service registry itself a single point of failure. Use multiple registry instances and failover.
+	Health Checks - This prevents traffic from being sent to dead instances.
+	Automated Registration 
+	Naming  - Use consistent service names and versions:
+	Caching - Cache discovery information to reduce load on the registry and improve lookup performance.
+	Scalability - The discovery mechanism itself must scale as the number of services and instances grows.
+	
+Service discovery allows services in a distributed system to dynamically locate healthy instances of other services without hardcoding their network locations.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Consensus in Distributed Systems
+
+1. What is Consensus?
+	Getting multiple distributed nodes to agree on a common value/state. This is necessary because distributed nodes need a consistent view of the system even though they operate independently and communicate through messages.
+	
+2. Why is Consensus Required?
+	When multiple nodes are processing parts of a system, they need to agree on the result/state.
+	Without Consensus
+		Node A → state = X
+		Node B → state = Y
+		Node C → state = X
+	Now the distributed system has three opinions, because apparently even computers discovered democracy.
+	Consensus ensures the non-faulty nodes agree on a common value.
+	
+3. Three Requirements of Consensus
+	Agreement - All non-faulty nodes must agree on the same value.
+	Validity - The agreed value must be a value proposed by a non-faulty node.
+	Termination - Every non-faulty node must eventually decide on some value.
+	
+4. Types of Failures
+	Crash Failure
+		A node stops responding because of a hardware, software, or network failure. The system can potentially detect and ignore the failed node.
+	Byzantine Failure
+		The node is running but behaves incorrectly or maliciously. This is much harder because other nodes cannot simply assume that a responding node is trustworthy.
+		
+5. Consensus Algorithms
+	A. Voting-Based Consensus - Nodes communicate and use voting/majority mechanisms to reach agreement.
+	e.g - Paxos, Raft.
+	
+6. PBFT (Practical Byzantine Fault Tolerance) 
+	It is designed to tolerate Byzantine/faulty nodes.
+	Analogy 
+		Multiple generals
+		       ↓
+		Need common decision
+		       ↓
+		Some generals may be traitors
+		       ↓
+		Honest generals must still agree
+		
+	Tthe classic requirement as having more than two-thirds of nodes honest for consensus
+	phases - Client -> Primary -> PRE-PREPARE -> PREPARE -> COMMIT -> Agreement.
+	The primary/leader broadcasts the request, replicas process it, and the client considers the request successful after receiving sufficiently consistent replies.
+	View Change
+		If the primary doesn't behave correctly or fails to broadcast within the expected time, the system can replace the primary using a view-change protocol.
+		
+7. Proof-Based Consensus
+	Used heavily in blockchain and decentralized networks. Instead of simply voting, participants provide some form of proof to participate in decision-making.
+	e.g - proof of work, proof of stake.
+	
+8. Applications
+	Consensus is used in distributed/decentralized systems such as:
+		Blockchain
+		Cryptocurrencies
+		Distributed databases
+		Load balancing
+		Other systems requiring coordinated state
