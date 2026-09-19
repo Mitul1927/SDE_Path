@@ -197,3 +197,76 @@ Consensus in Distributed Systems
 		Distributed databases
 		Load balancing
 		Other systems requiring coordinated state
+		
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Distributed Locks
+
+1. What is a Distributed Lock?
+	A distributed lock ensures that only one node/process performs a particular operation at a time.
+	Typical use cases:
+		Updating shared data
+		Running an expensive job once
+		Calling an external API
+		Preventing concurrent modifications
+		
+2. Two Reasons to Use a Lock
+	A. Efficiency
+		The lock only prevents duplicate work. if lock fails then two servers perform the same job. For this case, a simple single Redis instance may be enough.
+	B. Correctness
+		The lock is required to keep the system correct. if lock fails then two servers modify same resource.
+		
+3. The Big Problem with Lock Expiration
+	suppose client A gets lock and process pauses then lock expires and client B gets lock. Now both will think they own lock and both can modify resources.
+	The process could pause because of:
+		Garbage collection
+		CPU scheduling
+		Page faults
+		Disk/network delays
+		OS pauses
+		Long network delays
+
+	The important point - You cannot safely assume that a process or network operation will finish within a particular time.
+	
+4. Why Checking the Lock Again Doesn't Fix It
+	you may try to check lock and lock still valid so write data But the process can be paused between the check and the write. So check lock and it pauses then lock expires, another client gets lock and old one writes.
+	
+5. Solution: Fencing Tokens
+	Every time a client gets a lock, it receives an increasing number. client A lock it gets 33 , client B lock it get 34
+	The resource remembers the highest token it has accepted.
+	So if Client A wakes up late: client A token = 33 then write storage sees latest token = 34 then rejects this request.
+	
+6. Why Redlock Has a Problem
+	Redlock uses multiple Redis servers and majority voting.
+	idea is 
+		        Redis A
+			Redis B
+			Redis C
+		Client ─ Redis D
+			Redis E
+	Acquire the lock on a majority of them.
+	Redlock is not safe for correctness-critical locking because:
+		It relies heavily on timing assumptions.
+		Network delays can be unexpectedly large.
+		Processes can pause unexpectedly.
+		Clocks can jump or behave unexpectedly.
+		It doesn't provide proper fencing tokens.
+		
+7. Timing Assumptions
+	Redlock effectively assumes:
+		Network delay       → small
+		Process pause       → small
+		Clock error         → small
+		Lock TTL            → sufficiently large
+	But distributed systems can experience delays.
+	"Usually works" isn't enough when the lock protects correctness.
+	
+8. What Should You Use?
+	If lock is only for efficiency
+	A simple Redis lock can be sufficient.
+	simple redis -> simple lock -> Occasional failure is acceptable.
+	If lock is required for correctness use a system designed for strong coordination, such as:
+		ZooKeeper
+		A database with appropriate transactional guarantees
+		Another proper consensus/coordination system
+	important - Use fencing tokens when accessing the protected resource.
