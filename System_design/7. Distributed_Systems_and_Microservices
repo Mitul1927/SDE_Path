@@ -270,3 +270,132 @@ Distributed Locks
 		A database with appropriate transactional guarantees
 		Another proper consensus/coordination system
 	important - Use fencing tokens when accessing the protected resource.
+	
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Gossip Protocol
+
+1. What is Gossip Protocol?
+	Gossip protocol is a decentralized, peer-to-peer way for nodes to exchange information.
+	Instead of one central server telling everyone:
+		Central Server
+		/    |    \
+	       A     B     C
+	nodes periodically talk to a small random subset of other nodes:
+		A ──→ C
+		│     ↓
+		↓     E
+		B ──→ D
+		      ↓
+		   F
+		   
+2. Why Use Gossip?
+	Distributed systems need to:
+		Track which nodes are alive
+		Detect failed nodes
+		Share cluster state
+		Propagate configuration changes
+		Maintain membership information
+	A centralized system such as ZooKeeper can provide strong consistency, but it introduces centralization and potential scalability/failure concerns.
+	Gossip instead favors: Decentralization + scalability + eventual consistency
+	
+3. How It Works
+	Basic flow:
+		Every node maintains a partial node list
+			↓
+		Choose random peer
+			↓
+		Exchange state
+			↓
+		Compare versions
+			↓
+		Keep newest information
+			↓
+		Repeat periodically
+		
+4. Fanout and Cycle
+	Fanout - Number of nodes contacted by one node during a gossip round.
+	Cycle - Number of gossip rounds required for information to spread through the cluster.
+	Propagation is approximately: O(log(fanout) n) where n is the number of nodes.
+
+5. Types of Gossip
+	1. Anti-Entropy
+		Nodes compare their state and synchronize differences.
+			A state ↔ B state
+			       ↓
+			Find differences
+			       ↓
+			Synchronize
+		Useful for keeping replicas consistent.
+		Downside: can consume significant bandwidth because large amounts of state may be exchanged. Checksums, update lists, or Merkle trees can reduce unnecessary transfers.
+	2. Rumor-Mongering
+		A new update is treated like a rumor.
+			A gets update
+			    ↓
+			A → B, C
+			    ↓
+			B → D
+			C → E
+			    ↓
+			More nodes receive it
+		After several rounds, the message is stopped/aged out to limit traffic.
+		Useful for fast information dissemination.
+	3. Aggregation
+		Nodes exchange information and calculate a cluster-wide aggregate.
+		e.g - Average CPU usage, Total requests, Maximum load, Total memory usage
+		
+6. Push vs Pull vs Push-Pull
+	Push - Node with new information pushes it to random peers. Good when there are relatively few updates.
+	Pull - Nodes periodically ask peers for updates. Useful when there are many updates.
+	Push-Pull - Both happen. Generally provides fast and reliable dissemination by combining both approaches.
+	
+7. Failure Detection
+	Gossip is commonly used to detect dead nodes. Each node maintains a heartbeat. If the heartbeat stops increasing: it's possibly unhealthy or dead.
+	Multiple nodes can share their observations, making failure detection more reliable than relying on one node's observation.
+	
+8. Versioning
+	Nodes can receive old and new versions of the same information. Therefore, gossip uses version numbers to determine which information is newer.
+	A generation clock can also identify a node restart, while version numbers track changes within that generation.
+	
+9. Advantages
+	Scalability - Each node communicates with only a limited number of peers.
+	Fault Tolerance - If one node fails, another node can retransmit the information.
+	Decentralized - No single central coordinator is required.
+	Eventual Consistency - Information eventually propagates across the cluster.
+	Bounded Load - Fanout and message size can be controlled.
+	
+10. Disadvantages
+	Eventual consistency - Updates are not immediately visible everywhere.
+	Network overhead - The same information can be transmitted multiple times.
+	Latency - Information needs several gossip rounds to propagate.
+	Hard to debug - Random peer selection and nondeterministic propagation make failures harder to reproduce.
+	Network partitions - Different partitions can continue gossiping independently, delaying synchronization.
+	
+11. Common Use Cases
+	Gossip is commonly used for:
+		Cluster membership
+		Failure detection
+		Database replication
+		Information dissemination
+		Leader election
+		Distributed aggregation
+		Overlay networks
+
+Final Model - 
+			                 GOSSIP PROTOCOL
+					       │
+				  ┌────────────┴────────────┐
+				  │                         │
+			    Random peer                Periodic exchange
+				  │                         │
+				  └────────────┬────────────┘
+					              ↓
+					 Share state
+					              ↓
+					Compare versions
+					              ↓
+					 Merge latest
+					              ↓
+				      Eventually consistent
+				      
+Gossip protocol is a decentralized communication mechanism where nodes periodically exchange state with a small set of peers, allowing information such as membership, health, and configuration to eventually propagate throughout a large cluster.
