@@ -399,3 +399,60 @@ Final Model -
 				      Eventually consistent
 				      
 Gossip protocol is a decentralized communication mechanism where nodes periodically exchange state with a small set of peers, allowing information such as membership, health, and configuration to eventually propagate throughout a large cluster.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Circuit Breaker
+
+1. What is Circuit Breaker?
+	Circuit Breaker is a microservices resilience pattern that stops repeatedly calling a failing service.
+	When the remote service starts failing, the circuit breaker cuts off requests temporarily instead of allowing every request to wait and fail.
+	
+2. Why do we need it?
+	Without a circuit breaker: client -> Service A -> Service B❌
+	Every request keeps trying to reach Service B.
+	This can cause:
+		Long request timeouts
+		Threads getting blocked
+		Queues growing
+		Resource exhaustion
+		Poor response time
+		Cascading failures
+		
+3. How Circuit Breaker Solves It
+	Instead of continuously calling the unhealthy service: client -> Circuit Breaker -> Service B❌
+	After failures cross a threshold: client -> Circuit Breaker -> ❌ Request rejected immediately
+	
+4. Three States
+	CLOSED - Normal operation. Requests pass through normally. The circuit breaker monitors failures/latency. If failures exceed the configured threshold then OPEN.
+	OPEN - The service is considered unhealthy. The circuit breaker does not call the remote service. This prevents More network traffic, Thread exhaustion, Queue buildup, Cascading failures. After a configured timeout, it moves to HALF-OPEN.
+	HALF-OPEN - The circuit breaker tests whether the service has recovered. Only a limited number of test requests are allowed. if they succeed - HALF-OPEN → CLOSED, if they fail - HALF-OPEN → OPEN
+	
+5. Failure Threshold
+	The circuit doesn't necessarily open after one failure.
+	You can configure thresholds based on things like:
+		Failure count
+		Failure percentage
+		Response latency
+		Timeout frequency
+	In real systems, thresholds should be based on actual service behavior and monitoring data, not random numbers pulled from the engineering equivalent of a hat.
+	
+6. Why not just use a Timeout?
+	Suppose the service timeout is: 30 sec, without the circuit breaker every request waits for 30sec. Eventually your own service runs out of resources.
+	With Circuit Breaker - first failures -> Threshold reached -> Circuit OPEN -> Future requests fail immediately.
+	This protects the calling service from the failing dependency.
+	
+7. Circuit Breaker vs Retry
+	Retry - Useful for temporary/transient failures.
+	Circuit Breaker - Useful when the dependency is consistently failing.
+	
+8. Key Benefits
+	Prevents cascading failures
+	Protects system resources
+	Reduces unnecessary requests
+	Improves response time during failures
+	Gives failed services time to recover
+	Allows automatic recovery through HALF-OPEN testing
+	Improves overall system resilience
+	
+Circuit Breaker is a resilience pattern that monitors calls to a remote service, opens the circuit after failures cross a threshold, fails requests fast while the dependency is unhealthy, and periodically tests recovery before allowing normal traffic again.
