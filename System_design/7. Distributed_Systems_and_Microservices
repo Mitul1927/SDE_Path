@@ -456,3 +456,194 @@ Circuit Breaker
 	Improves overall system resilience
 	
 Circuit Breaker is a resilience pattern that monitors calls to a remote service, opens the circuit after failures cross a threshold, fails requests fast while the dependency is unhealthy, and periodically tests recovery before allowing normal traffic again.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Disaster Recovery 
+
+1. What is Disaster Recovery?
+	Disaster Recovery (DR) is the ability of an organization to restore IT infrastructure, applications, data, and services after a disruptive event.
+	Examples of disasters:
+		Cyberattacks
+		Ransomware / DDoS
+		Hardware failure
+		Power/network outages
+		Software failures
+		Human errors
+		Natural disasters
+		
+2. Why is DR Important?
+	without dr -
+		Disaster
+		   ↓
+		System Down
+		   ↓
+		Data Loss
+		   ↓
+		Business Stops
+		   ↓
+		Revenue + Customer Trust Lost
+	with dr - 
+		Disaster
+		   ↓
+		Detect
+		   ↓
+		Failover / Restore
+		   ↓
+		Systems Recover
+		   ↓
+		Business Continues
+	Main benefits:
+		Protects data
+		Reduces downtime
+		Maintains business continuity
+		Reduces financial losses
+		Protects customer trust
+		Helps satisfy compliance requirements
+		
+3. Five Steps of Disaster Recovery
+	1. Risk Assessment
+		Identify possible threats and vulnerabilities. What can go wrong - Hardware failure? Cyberattack? Human error? Natural disaster?
+	2. Business Impact Analysis (BIA)
+		Determine what happens to the business if something fails.
+		Consider - Financial impact, Reputation, Compliance, Critical business functions.
+	3. DR Planning
+		Define - Recovery procedures, Roles and responsibilities, Communication process, Backup strategy, Failover strategy.
+	4. Implementation
+		Actually build the DR mechanisms: Backups, Data replication, Failover systems, Recovery infrastructure.
+	5. Testing & Maintenance
+		Regularly test the DR plan and update it as systems change. Because a DR document sitting peacefully in a Google Drive folder is not a recovery strategy.
+
+4. Preventive, Detective, Corrective
+	Preventive - Try to prevent the disaster. e.g - Backups, Security Controls, Monitoring, Configuration validation.
+	Detective - Detect problems quickly. Failure occurs -> Monitoring detects it -> Start recovery process.
+	Corrective - Recover after the failure. e.g - Restore Backups.
+	
+5. Backup vs Disaster Recovery
+	Backup - A copy of data stored separately so it can be restored if the original is lost or corrupted.
+	Disaster Recovery - The complete strategy for restoring IT systems and operations.
+	Backup is a component of Disaster Recovery, not the same thing as DR.
+
+6. 3-2-1 Backup Rule
+	3 → Copies of data
+	2 → Different storage media
+	1 → Offsite copy
+	
+7. Types of Disaster Recovery
+	Backup - Copy data to another location. Use: Data archiving and recovery.
+	BaaS - Backup as a Service. A third-party provider manages regular backups.
+	DRaaS - Disaster Recovery as a Service. A third-party provider manages both: Data, IT infrastructure, Recovery process.
+	Point-in-Time Snapshots - Capture data/database state at a particular moment. Useful for recovering from accidental deletion or corruption.
+	Virtual DR - Create a virtual replica of infrastructure and fail over to it after a disaster.
+	Disaster Recovery Site - A separate location containing the infrastructure/data needed to recover operations.
+
+8. RTO and RPO
+	RTO = Recovery Time Objective
+		How quickly must the system recover? Lower RTO → faster recovery required.
+	RPO = Recovery Point Objective
+		How much data loss can the business tolerate? Lower RPO → backups/replication need to happen more frequently.
+
+9. High Availability vs Disaster Recovery
+	High Availability - Designed to handle smaller failures without significant downtime.
+	Disaster Recovery - Designed to recover from major disruptive events.
+	
+Disaster Recovery is the set of processes, infrastructure, backups, and recovery mechanisms used to restore critical IT systems and data after a disruptive event, with RTO defining how quickly recovery must happen and RPO defining how much data loss is acceptable.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Distributed Tracing
+
+1. What is Distributed Tracing?
+	Distributed tracing tracks a single request as it travels through multiple services in a distributed system.
+	e.g - User -> API Gateway -> Order Service -> Payment Service -> Database.
+	A unique Trace ID follows the request across all these services, allowing you to see the complete journey.
+	
+2. Trace and Span
+	Trace - A Trace represents the complete journey of one request.
+	Span - A Span represents one individual operation within the trace.
+	Each span typically contains: Operation name, Start time, End time, Duration , Metadata, Parent/child relationship.
+	
+3. Why Do We Need Distributed Tracing?
+	In a monolith: Request → Application → DB. Finding a problem is relatively straightforward.
+	In microservices: Request -> Service A -> Service B -> Service C -> Service D -> Database.
+	If the request takes 5 seconds, which service caused it?
+	Distributed tracing helps identify: slow services, failed requests, network delays, database bottlenecks, dependency problems, root causes of errors.
+	
+4. How Distributed Tracing Works
+	basic flow - Request arrives -> Generate Trace ID -> Service A creates span -> Service B creates span -> Service C creates Span -> All spans linked to Trace Id -> Tracing system reconstructs request.
+	e.g - Trace ID = 123
+
+		API Gateway
+		100 ms
+		   │
+		   ▼
+	      Order Service
+		200 ms
+		   │
+		   ▼
+	     Payment Service
+		2.5 sec  ← Bottleneck
+		   │
+		   ▼
+		Database
+		 50 ms
+		 
+5. Parent-Child Spans
+	Spans form relationships.
+	Trace
+	 │
+	 └── API Request
+	       │
+	       ├── Order Service
+	       │     └── DB Query
+	       │
+	       └── Payment Service
+		     └── Payment DB
+		     
+6. Distributed Tracing vs Logging
+	Logging - Records individual events. The problem is that these logs can be scattered across different services.
+	Distributed Tracing - Connects the events through the same request.
+	Logs tell you what happened inside a component.
+	Traces tell you how a request moved through the whole system.
+	
+7. Three Pillars of Observability
+	       Observability
+	       /     |      \
+	      /      |       \
+	   Logs    Metrics   Traces
+	   
+	Logs - Timestamped records of events.
+	Metrics - Numerical measurements over time. cpu rate , latency, error rate.
+	Traces - The path of a particular request through the system.
+
+8. Benefits
+	Distributed tracing helps with:
+		Root-cause analysis
+		Finding performance bottlenecks
+		Monitoring microservice health
+		Understanding dependencies
+		Debugging production issues
+		Improving SLA compliance
+		Understanding user experience
+		
+9. Challenges
+	1. Instrumentation
+		Applications may need instrumentation so tracing information can be captured. Manual instrumentation can require development effort and can introduce mistakes.
+	2. Large Amount of Data
+		Large systems can generate huge numbers of traces.
+		Therefore, sampling is often required.
+	3. Head-Based Sampling
+		Decide whether to keep a trace at the beginning of the request.
+	4. Tail-Based Sampling
+		Make the sampling decision after seeing more of the trace.
+		
+10. When Should You Use It?
+	Distributed tracing becomes particularly useful when:
+		You have microservices
+		Requests cross many services
+		You use serverless architectures
+		Debugging production latency
+		You need to identify root causes quickly
+		You need visibility into service dependencies
+		
+Distributed tracing follows a request across multiple services using a unique Trace ID and connected Spans, allowing engineers to understand request flow, identify bottlenecks, and quickly find the root cause of failures in distributed systems.
