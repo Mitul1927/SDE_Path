@@ -1,649 +1,355 @@
-Heartbeat
+Client-Server Architecture
 
-1. What is a Heartbeat?
-	A heartbeat is a periodic message sent between components to indicate:
-		"I'm alive and working."
-	It is usually a small message containing information such as a timestamp or sequence number.
-	
-2. Why Do We Need Heartbeats?
-	Distributed systems cannot simply assume that a node is alive.
-	A node might: crash, Lose network connectivity, Become unresponsive, Become overload.
-	Heartbeats help with: Failure detection, Health monitoring, Failover, Recovery.
-	
-3. How Heartbeats Work
-	Two main components:
-		Heartbeat Sender - The node periodically sends a heartbeat.
-		Heartbeat Receiver / Monitor - Tracks when the last heartbeat was received.
-	The monitor can then redirect traffic, initiate failover, restart work, or alert an administrator.
-	
-4. Heartbeat Frequency
-	Heartbeat interval determines how quickly failures can be detected.
-	Frequent - Fast failure detection and more network/resource overhead
-	Infrequent - Less Overhead and slower failure detection.
-	tradeoff - Detection speed ↔ Resource usage.
+1. What is Client-Server Architecture?
+	Client → requests work
+	Server → processes the request, applies business rules, accesses shared data, and returns a response
+		Client
+		  │
+		  │ Request
+		  ▼
+		Server
+		  │
+		  ├── Business Logic
+		  ├── Database
+		  └── Other Services
+		  │
+		  ▼
+		Response
 
-5. Timeout
-	The monitor needs a timeout to decide when a node is probably dead.
-	e.g - Heartbeat every 10 sec Timeout = 30 sec
-	Timeout too short - Healthy but slow node -> false failure.
-	Timeout too long - Actually failed node -> detected too late.
-	The timeout should account for expected network latency and application requirements.
-	
-6. Heartbeat Payload
-	Heartbeat doesn't have to contain only "I'm alive."
-	it can also include - 
-		{
-		  "timestamp": "...",
-		  "sequence": 12345,
-		  "load": 0.62,
-		  "version": "v2.4",
-		  "health": "healthy"
-		}
-	Possible information - Timestamp, Sequence number, Current load, Health metrics.
-
-7. Push vs Pull Heartbeats
-	Push - The node sends heartbeats to the monitor. The sender initiates the check.
-	Pull - The monitor periodically asks the node for its status. The monitor initiates the check.
-	
-8. Heartbeats vs Health Checks
-	Heartbeat - i'm still responding.
-	Health check - I'm actually healthy enough to server traffic.
-	A process can technically be alive but unable to serve requests because, for example, its database connection pool is exhausted. So in production systems, a heartbeat alone may not be sufficient to determine readiness.	
-	
-9. Challenges
-	False Positives 
-		Network delay can make a healthy node look dead.
-		Network Congestion - Too many heartbeat messages can consume network resources.
-		Resource Usage - Sending and processing heartbeats consumes CPU/network resources.
-		Split Brain - A network partition can make both sides believe the other side is dead.
+2. How Communication Works
+	Client -> DNS -> HTTPS/TLS -> Load Balancer/Proxy -> Application Server -> Database / Other Services -> Response -> Client
+	Important technologies
+		DNS → finds the server's network address
+		HTTP/HTTPS → application-level communication
+		TCP → reliable ordered transport
+		QUIC → transport used by HTTP/3
+		TLS → encryption + server authentication
+		Ports → identify network services
 		
-10. Real-World Examples
-	Database Replication  - Primary and replicas can use heartbeats to detect failures and trigger failover.
-	Kubernetes - Kubernetes nodes periodically communicate their availability to the control plane. The control plane uses this information when tracking node health and scheduling.
-	Elasticsearch - Nodes communicate within the cluster for discovery, cluster-state coordination, and failure detection.
+3. Types of Architecture
+	1-Tier 
+		Everything is together.
+		UI + Logic + Data = same system
+		Example:
+			Local spreadsheet
+			Single-user desktop application
+	2-Tier
+		Client directly communicates with the server/database.
+		client -> Server / Database
+		e.g - Desktop App → PostgreSQL. Good for: controlled internal systems.
+	3-Tier
+		Most important baseline architecture.
+			┌──────────────┐
+			│ Presentation │  ← Client/UI
+			└──────┬───────┘
+			       	↓
+			┌──────────────┐
+			│ Application  │  ← Business Logic/API
+			└──────┬───────┘
+			      	 ↓
+			┌──────────────┐
+			│ Data Layer   │  ← DB/Cache/Storage
+			└──────────────┘
+		Layers
+			Presentation
+				Web UI
+				Mobile UI
+				Desktop UI
+			Application
+				Authentication
+				Validation
+				Business rules
+				API handling
+			Data
+				Database
+				Cache
+				Object storage
+				Search indexes
+				
+4. N-Tier Architecture
+	N-tier extends the 3-tier model by introducing additional specialized layers/services.
+	Possible components: CDN, WAF, API Gateway, Authentication service, Microservices, Cache, Database, Message queue, Search service, Background workers, Monitoring.
+	why? to handle Large scale, Security, Specialized workloads, Team ownership, Independent scaling.
+
+5. Advantages
+	Centralized Business Rules
+		client -> Client → "Transfer ₹10,000", Server checks : Authentication , Authorization , Account balance, Transfer Limits, Fraud rules
+	Security
+		Clients should not directly access: Private databases, Internal services, Payment systems, Secret API keys
+		instead - Client → Backend → Protected Resources
+	Easier Updates
+		Server-side logic can change without requiring every client to immediately update.
+	Observability
+		Centralized backend infrastructure makes it easier to collect: Logs, Metrics, Traces, Errors, Audit information.
+
+6. Major Challenges
+	Latency
+		Every network call adds latency.
+		Client (-> 50ms) API (-> 20ms) Service (-> 30ms) DB 
+		Total latency adds up.
+	Failures
+		Possible failures: Network timeout, Database failure, Server crash, Third-party API failure, Load balancer failure.
+		Use: Timeouts, Retries , backoff, Health checks, Failover, Queues, Circuit breakers.
+	State 
+		State makes scaling harder.
+		Server A ─┐
+		Server B ─┼→ Shared Session Store
+		Server C ─┘
+
+7. Protect Against Overload
+	Useful techniques: Rate limiting, Queues, Backpressure, Load shedding, Graceful degradation.
+	The goal is to keep critical functionality alive instead of letting the entire system collapse dramatically because someone refreshed a page 400 times.
 	
-A heartbeat is a periodic health signal used by distributed systems to detect unresponsive nodes and trigger actions such as failover, traffic redirection, or recovery.
-
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-Service discovery in distributed systesm
-
-1. What is Service Discovery?
-	mechanism that allows services to dynamically find and communicate with other services.
-	instead of hardcoding, payment service -> 10.20.3.45:3000, service use a Service Registry.
-	The Registry typically stores:
-		Service name
-		IP + port
-		Health/status
-		Version
-		Environment/region
-		Tags/metadata
-		Load-balancing information
+8. Synchronous vs Background Work
+	Not every operation needs to happen before returning the response.
+	Synchronous
+		Request -> Process -> Response
+		Good for: login, Fetching data, Simple CRUD
+	Asynchronous
+		Request -> Store Job -> Quick Response -> Queue -> Worker -> Process
+		Good for: Sending emails, Image processing, Video processing, Reports, Analytics, Long-running AI tasks.
 		
-2. Why do we need it?
-	In microservices, instances constantly start, stop, scale and move. Hardcoding IP addresses would become a spectacularly bad life decision.
-	Service discovery provides:
-		Less manual configuration
-		Dynamic scaling
-		Fault tolerance
-		Centralized service management
-		Ability to route traffic away from unhealthy instances
+9. Service Splitting
+	You don't need to immediately turn everything into 47 microservices because someone watched a conference talk.
+	Split services when there is a real reason:
+		Different scaling requirements
+		Different ownership
+		Independent deployment
+		Clear domain boundary
+		Different reliability requirements
 		
-3. Service Registration
-	Before a service can be discovered, it needs to register itself.
-	Types 
-		1. Manual Registration - Developer -> Registry. Simple but bad for dynamic environments.
-		2. Self Registration - Service starts -> Registers itself -> Sends heartbeats -> Registry knows it's alive.
-		3. Sidecar registration - A separate sidecar process handles registration instead of the application.
-		4. Orchestrator-based - Platforms such as Kubernetes can automatically handle service registration and discovery through mechanisms such as Kubernetes DNS.
-		
-4. Two Types of Service Discovery
-	A. Client-Side Discovery - The client finds the service and chooses the instance.
-		Order Service -> Ask registry to Service registry -> gets IPs and call Order Service -> Choose instance for Payment Service
-		Flow
-			Payment instances register themselves.
-			Order Service queries the registry.
-			Registry returns available instances.
-			Order Service selects an instance.
-			Request goes directly to that instance.
-			
-		e.g - Netflix Eureka
-	B. Server-Side Discovery
-		The client doesn't care where the service lives.
-		Order Service -> Load Balancer/API Gateway -> Service Registry -> Payment Service Instance
-		Flow
-			Services register with registry.
-			Client sends request to Load Balancer/API Gateway.
-			Load Balancer queries registry.
-			It selects a healthy instance.
-			Request is forwarded to that instance.
-			
-5. Client vs Server-Side
-	| Feature                 | Client-Side           | Server-Side               |
-	| ----------------------- | --------------------- | ------------------------- |
-	| Who performs discovery? | Client                | Load Balancer/Gateway     |
-	| Client complexity       | Higher                | Lower                     |
-	| Load balancing          | Client                | Server                    |
-	| Network hop             | Fewer                 | Additional hop            |
-	| Centralized logic       | No                    | Yes                       |
-	| Example                 | Eureka-style approach | Load Balancer/API Gateway |
-
-6. Important Best Practices
-	High Availability - Don't make the service registry itself a single point of failure. Use multiple registry instances and failover.
-	Health Checks - This prevents traffic from being sent to dead instances.
-	Automated Registration 
-	Naming  - Use consistent service names and versions:
-	Caching - Cache discovery information to reduce load on the registry and improve lookup performance.
-	Scalability - The discovery mechanism itself must scale as the number of services and instances grows.
-	
-Service discovery allows services in a distributed system to dynamically locate healthy instances of other services without hardcoding their network locations.
-
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-Consensus in Distributed Systems
-
-1. What is Consensus?
-	Getting multiple distributed nodes to agree on a common value/state. This is necessary because distributed nodes need a consistent view of the system even though they operate independently and communicate through messages.
-	
-2. Why is Consensus Required?
-	When multiple nodes are processing parts of a system, they need to agree on the result/state.
-	Without Consensus
-		Node A → state = X
-		Node B → state = Y
-		Node C → state = X
-	Now the distributed system has three opinions, because apparently even computers discovered democracy.
-	Consensus ensures the non-faulty nodes agree on a common value.
-	
-3. Three Requirements of Consensus
-	Agreement - All non-faulty nodes must agree on the same value.
-	Validity - The agreed value must be a value proposed by a non-faulty node.
-	Termination - Every non-faulty node must eventually decide on some value.
-	
-4. Types of Failures
-	Crash Failure
-		A node stops responding because of a hardware, software, or network failure. The system can potentially detect and ignore the failed node.
-	Byzantine Failure
-		The node is running but behaves incorrectly or maliciously. This is much harder because other nodes cannot simply assume that a responding node is trustworthy.
-		
-5. Consensus Algorithms
-	A. Voting-Based Consensus - Nodes communicate and use voting/majority mechanisms to reach agreement.
-	e.g - Paxos, Raft.
-	
-6. PBFT (Practical Byzantine Fault Tolerance) 
-	It is designed to tolerate Byzantine/faulty nodes.
-	Analogy 
-		Multiple generals
-		       ↓
-		Need common decision
-		       ↓
-		Some generals may be traitors
-		       ↓
-		Honest generals must still agree
-		
-	Tthe classic requirement as having more than two-thirds of nodes honest for consensus
-	phases - Client -> Primary -> PRE-PREPARE -> PREPARE -> COMMIT -> Agreement.
-	The primary/leader broadcasts the request, replicas process it, and the client considers the request successful after receiving sufficiently consistent replies.
-	View Change
-		If the primary doesn't behave correctly or fails to broadcast within the expected time, the system can replace the primary using a view-change protocol.
-		
-7. Proof-Based Consensus
-	Used heavily in blockchain and decentralized networks. Instead of simply voting, participants provide some form of proof to participate in decision-making.
-	e.g - proof of work, proof of stake.
-	
-8. Applications
-	Consensus is used in distributed/decentralized systems such as:
-		Blockchain
-		Cryptocurrencies
-		Distributed databases
-		Load balancing
-		Other systems requiring coordinated state
-		
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-Distributed Locks
-
-1. What is a Distributed Lock?
-	A distributed lock ensures that only one node/process performs a particular operation at a time.
-	Typical use cases:
-		Updating shared data
-		Running an expensive job once
-		Calling an external API
-		Preventing concurrent modifications
-		
-2. Two Reasons to Use a Lock
-	A. Efficiency
-		The lock only prevents duplicate work. if lock fails then two servers perform the same job. For this case, a simple single Redis instance may be enough.
-	B. Correctness
-		The lock is required to keep the system correct. if lock fails then two servers modify same resource.
-		
-3. The Big Problem with Lock Expiration
-	suppose client A gets lock and process pauses then lock expires and client B gets lock. Now both will think they own lock and both can modify resources.
-	The process could pause because of:
-		Garbage collection
-		CPU scheduling
-		Page faults
-		Disk/network delays
-		OS pauses
-		Long network delays
-
-	The important point - You cannot safely assume that a process or network operation will finish within a particular time.
-	
-4. Why Checking the Lock Again Doesn't Fix It
-	you may try to check lock and lock still valid so write data But the process can be paused between the check and the write. So check lock and it pauses then lock expires, another client gets lock and old one writes.
-	
-5. Solution: Fencing Tokens
-	Every time a client gets a lock, it receives an increasing number. client A lock it gets 33 , client B lock it get 34
-	The resource remembers the highest token it has accepted.
-	So if Client A wakes up late: client A token = 33 then write storage sees latest token = 34 then rejects this request.
-	
-6. Why Redlock Has a Problem
-	Redlock uses multiple Redis servers and majority voting.
-	idea is 
-		        Redis A
-			Redis B
-			Redis C
-		Client ─ Redis D
-			Redis E
-	Acquire the lock on a majority of them.
-	Redlock is not safe for correctness-critical locking because:
-		It relies heavily on timing assumptions.
-		Network delays can be unexpectedly large.
-		Processes can pause unexpectedly.
-		Clocks can jump or behave unexpectedly.
-		It doesn't provide proper fencing tokens.
-		
-7. Timing Assumptions
-	Redlock effectively assumes:
-		Network delay       → small
-		Process pause       → small
-		Clock error         → small
-		Lock TTL            → sufficiently large
-	But distributed systems can experience delays.
-	"Usually works" isn't enough when the lock protects correctness.
-	
-8. What Should You Use?
-	If lock is only for efficiency
-	A simple Redis lock can be sufficient.
-	simple redis -> simple lock -> Occasional failure is acceptable.
-	If lock is required for correctness use a system designed for strong coordination, such as:
-		ZooKeeper
-		A database with appropriate transactional guarantees
-		Another proper consensus/coordination system
-	important - Use fencing tokens when accessing the protected resource.
-	
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-Gossip Protocol
-
-1. What is Gossip Protocol?
-	Gossip protocol is a decentralized, peer-to-peer way for nodes to exchange information.
-	Instead of one central server telling everyone:
-		Central Server
-		/    |    \
-	       A     B     C
-	nodes periodically talk to a small random subset of other nodes:
-		A ──→ C
-		│     ↓
-		↓     E
-		B ──→ D
-		      ↓
-		   F
-		   
-2. Why Use Gossip?
-	Distributed systems need to:
-		Track which nodes are alive
-		Detect failed nodes
-		Share cluster state
-		Propagate configuration changes
-		Maintain membership information
-	A centralized system such as ZooKeeper can provide strong consistency, but it introduces centralization and potential scalability/failure concerns.
-	Gossip instead favors: Decentralization + scalability + eventual consistency
-	
-3. How It Works
-	Basic flow:
-		Every node maintains a partial node list
-			↓
-		Choose random peer
-			↓
-		Exchange state
-			↓
-		Compare versions
-			↓
-		Keep newest information
-			↓
-		Repeat periodically
-		
-4. Fanout and Cycle
-	Fanout - Number of nodes contacted by one node during a gossip round.
-	Cycle - Number of gossip rounds required for information to spread through the cluster.
-	Propagation is approximately: O(log(fanout) n) where n is the number of nodes.
-
-5. Types of Gossip
-	1. Anti-Entropy
-		Nodes compare their state and synchronize differences.
-			A state ↔ B state
-			       ↓
-			Find differences
-			       ↓
-			Synchronize
-		Useful for keeping replicas consistent.
-		Downside: can consume significant bandwidth because large amounts of state may be exchanged. Checksums, update lists, or Merkle trees can reduce unnecessary transfers.
-	2. Rumor-Mongering
-		A new update is treated like a rumor.
-			A gets update
-			    ↓
-			A → B, C
-			    ↓
-			B → D
-			C → E
-			    ↓
-			More nodes receive it
-		After several rounds, the message is stopped/aged out to limit traffic.
-		Useful for fast information dissemination.
-	3. Aggregation
-		Nodes exchange information and calculate a cluster-wide aggregate.
-		e.g - Average CPU usage, Total requests, Maximum load, Total memory usage
-		
-6. Push vs Pull vs Push-Pull
-	Push - Node with new information pushes it to random peers. Good when there are relatively few updates.
-	Pull - Nodes periodically ask peers for updates. Useful when there are many updates.
-	Push-Pull - Both happen. Generally provides fast and reliable dissemination by combining both approaches.
-	
-7. Failure Detection
-	Gossip is commonly used to detect dead nodes. Each node maintains a heartbeat. If the heartbeat stops increasing: it's possibly unhealthy or dead.
-	Multiple nodes can share their observations, making failure detection more reliable than relying on one node's observation.
-	
-8. Versioning
-	Nodes can receive old and new versions of the same information. Therefore, gossip uses version numbers to determine which information is newer.
-	A generation clock can also identify a node restart, while version numbers track changes within that generation.
-	
-9. Advantages
-	Scalability - Each node communicates with only a limited number of peers.
-	Fault Tolerance - If one node fails, another node can retransmit the information.
-	Decentralized - No single central coordinator is required.
-	Eventual Consistency - Information eventually propagates across the cluster.
-	Bounded Load - Fanout and message size can be controlled.
-	
-10. Disadvantages
-	Eventual consistency - Updates are not immediately visible everywhere.
-	Network overhead - The same information can be transmitted multiple times.
-	Latency - Information needs several gossip rounds to propagate.
-	Hard to debug - Random peer selection and nondeterministic propagation make failures harder to reproduce.
-	Network partitions - Different partitions can continue gossiping independently, delaying synchronization.
-	
-11. Common Use Cases
-	Gossip is commonly used for:
-		Cluster membership
-		Failure detection
-		Database replication
-		Information dissemination
-		Leader election
-		Distributed aggregation
-		Overlay networks
-
-Final Model - 
-			                 GOSSIP PROTOCOL
-					       │
-				  ┌────────────┴────────────┐
-				  │                         │
-			    Random peer                Periodic exchange
-				  │                         │
-				  └────────────┬────────────┘
-					              ↓
-					 Share state
-					              ↓
-					Compare versions
-					              ↓
-					 Merge latest
-					              ↓
-				      Eventually consistent
-				      
-Gossip protocol is a decentralized communication mechanism where nodes periodically exchange state with a small set of peers, allowing information such as membership, health, and configuration to eventually propagate throughout a large cluster.
-
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-Circuit Breaker
-
-1. What is Circuit Breaker?
-	Circuit Breaker is a microservices resilience pattern that stops repeatedly calling a failing service.
-	When the remote service starts failing, the circuit breaker cuts off requests temporarily instead of allowing every request to wait and fail.
-	
-2. Why do we need it?
-	Without a circuit breaker: client -> Service A -> Service B❌
-	Every request keeps trying to reach Service B.
-	This can cause:
-		Long request timeouts
-		Threads getting blocked
-		Queues growing
-		Resource exhaustion
-		Poor response time
-		Cascading failures
-		
-3. How Circuit Breaker Solves It
-	Instead of continuously calling the unhealthy service: client -> Circuit Breaker -> Service B❌
-	After failures cross a threshold: client -> Circuit Breaker -> ❌ Request rejected immediately
-	
-4. Three States
-	CLOSED - Normal operation. Requests pass through normally. The circuit breaker monitors failures/latency. If failures exceed the configured threshold then OPEN.
-	OPEN - The service is considered unhealthy. The circuit breaker does not call the remote service. This prevents More network traffic, Thread exhaustion, Queue buildup, Cascading failures. After a configured timeout, it moves to HALF-OPEN.
-	HALF-OPEN - The circuit breaker tests whether the service has recovered. Only a limited number of test requests are allowed. if they succeed - HALF-OPEN → CLOSED, if they fail - HALF-OPEN → OPEN
-	
-5. Failure Threshold
-	The circuit doesn't necessarily open after one failure.
-	You can configure thresholds based on things like:
-		Failure count
-		Failure percentage
-		Response latency
-		Timeout frequency
-	In real systems, thresholds should be based on actual service behavior and monitoring data, not random numbers pulled from the engineering equivalent of a hat.
-	
-6. Why not just use a Timeout?
-	Suppose the service timeout is: 30 sec, without the circuit breaker every request waits for 30sec. Eventually your own service runs out of resources.
-	With Circuit Breaker - first failures -> Threshold reached -> Circuit OPEN -> Future requests fail immediately.
-	This protects the calling service from the failing dependency.
-	
-7. Circuit Breaker vs Retry
-	Retry - Useful for temporary/transient failures.
-	Circuit Breaker - Useful when the dependency is consistently failing.
-	
-8. Key Benefits
-	Prevents cascading failures
-	Protects system resources
-	Reduces unnecessary requests
-	Improves response time during failures
-	Gives failed services time to recover
-	Allows automatic recovery through HALF-OPEN testing
-	Improves overall system resilience
-	
-Circuit Breaker is a resilience pattern that monitors calls to a remote service, opens the circuit after failures cross a threshold, fails requests fast while the dependency is unhealthy, and periodically tests recovery before allowing normal traffic again.
-
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-Disaster Recovery 
-
-1. What is Disaster Recovery?
-	Disaster Recovery (DR) is the ability of an organization to restore IT infrastructure, applications, data, and services after a disruptive event.
-	Examples of disasters:
-		Cyberattacks
-		Ransomware / DDoS
-		Hardware failure
-		Power/network outages
-		Software failures
-		Human errors
-		Natural disasters
-		
-2. Why is DR Important?
-	without dr -
-		Disaster
-		   ↓
-		System Down
-		   ↓
-		Data Loss
-		   ↓
-		Business Stops
-		   ↓
-		Revenue + Customer Trust Lost
-	with dr - 
-		Disaster
-		   ↓
-		Detect
-		   ↓
-		Failover / Restore
-		   ↓
-		Systems Recover
-		   ↓
-		Business Continues
-	Main benefits:
-		Protects data
-		Reduces downtime
-		Maintains business continuity
-		Reduces financial losses
-		Protects customer trust
-		Helps satisfy compliance requirements
-		
-3. Five Steps of Disaster Recovery
-	1. Risk Assessment
-		Identify possible threats and vulnerabilities. What can go wrong - Hardware failure? Cyberattack? Human error? Natural disaster?
-	2. Business Impact Analysis (BIA)
-		Determine what happens to the business if something fails.
-		Consider - Financial impact, Reputation, Compliance, Critical business functions.
-	3. DR Planning
-		Define - Recovery procedures, Roles and responsibilities, Communication process, Backup strategy, Failover strategy.
-	4. Implementation
-		Actually build the DR mechanisms: Backups, Data replication, Failover systems, Recovery infrastructure.
-	5. Testing & Maintenance
-		Regularly test the DR plan and update it as systems change. Because a DR document sitting peacefully in a Google Drive folder is not a recovery strategy.
-
-4. Preventive, Detective, Corrective
-	Preventive - Try to prevent the disaster. e.g - Backups, Security Controls, Monitoring, Configuration validation.
-	Detective - Detect problems quickly. Failure occurs -> Monitoring detects it -> Start recovery process.
-	Corrective - Recover after the failure. e.g - Restore Backups.
-	
-5. Backup vs Disaster Recovery
-	Backup - A copy of data stored separately so it can be restored if the original is lost or corrupted.
-	Disaster Recovery - The complete strategy for restoring IT systems and operations.
-	Backup is a component of Disaster Recovery, not the same thing as DR.
-
-6. 3-2-1 Backup Rule
-	3 → Copies of data
-	2 → Different storage media
-	1 → Offsite copy
-	
-7. Types of Disaster Recovery
-	Backup - Copy data to another location. Use: Data archiving and recovery.
-	BaaS - Backup as a Service. A third-party provider manages regular backups.
-	DRaaS - Disaster Recovery as a Service. A third-party provider manages both: Data, IT infrastructure, Recovery process.
-	Point-in-Time Snapshots - Capture data/database state at a particular moment. Useful for recovering from accidental deletion or corruption.
-	Virtual DR - Create a virtual replica of infrastructure and fail over to it after a disaster.
-	Disaster Recovery Site - A separate location containing the infrastructure/data needed to recover operations.
-
-8. RTO and RPO
-	RTO = Recovery Time Objective
-		How quickly must the system recover? Lower RTO → faster recovery required.
-	RPO = Recovery Point Objective
-		How much data loss can the business tolerate? Lower RPO → backups/replication need to happen more frequently.
-
-9. High Availability vs Disaster Recovery
-	High Availability - Designed to handle smaller failures without significant downtime.
-	Disaster Recovery - Designed to recover from major disruptive events.
-	
-Disaster Recovery is the set of processes, infrastructure, backups, and recovery mechanisms used to restore critical IT systems and data after a disruptive event, with RTO defining how quickly recovery must happen and RPO defining how much data loss is acceptable.
-
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-Distributed Tracing
-
-1. What is Distributed Tracing?
-	Distributed tracing tracks a single request as it travels through multiple services in a distributed system.
-	e.g - User -> API Gateway -> Order Service -> Payment Service -> Database.
-	A unique Trace ID follows the request across all these services, allowing you to see the complete journey.
-	
-2. Trace and Span
-	Trace - A Trace represents the complete journey of one request.
-	Span - A Span represents one individual operation within the trace.
-	Each span typically contains: Operation name, Start time, End time, Duration , Metadata, Parent/child relationship.
-	
-3. Why Do We Need Distributed Tracing?
-	In a monolith: Request → Application → DB. Finding a problem is relatively straightforward.
-	In microservices: Request -> Service A -> Service B -> Service C -> Service D -> Database.
-	If the request takes 5 seconds, which service caused it?
-	Distributed tracing helps identify: slow services, failed requests, network delays, database bottlenecks, dependency problems, root causes of errors.
-	
-4. How Distributed Tracing Works
-	basic flow - Request arrives -> Generate Trace ID -> Service A creates span -> Service B creates span -> Service C creates Span -> All spans linked to Trace Id -> Tracing system reconstructs request.
-	e.g - Trace ID = 123
-
+10. Real-World Example
+	For an e-commerce application:
+		Mobile App
+		    ↓
 		API Gateway
-		100 ms
-		   │
-		   ▼
-	      Order Service
-		200 ms
-		   │
-		   ▼
-	     Payment Service
-		2.5 sec  ← Bottleneck
-		   │
-		   ▼
-		Database
-		 50 ms
-		 
-5. Parent-Child Spans
-	Spans form relationships.
-	Trace
-	 │
-	 └── API Request
-	       │
-	       ├── Order Service
-	       │     └── DB Query
-	       │
-	       └── Payment Service
-		     └── Payment DB
-		     
-6. Distributed Tracing vs Logging
-	Logging - Records individual events. The problem is that these logs can be scattered across different services.
-	Distributed Tracing - Connects the events through the same request.
-	Logs tell you what happened inside a component.
-	Traces tell you how a request moved through the whole system.
-	
-7. Three Pillars of Observability
-	       Observability
-	       /     |      \
-	      /      |       \
-	   Logs    Metrics   Traces
-	   
-	Logs - Timestamped records of events.
-	Metrics - Numerical measurements over time. cpu rate , latency, error rate.
-	Traces - The path of a particular request through the system.
+		    ↓
+		Order Service
+		    ├── Payment Service
+		    ├── Inventory Service
+		    └── User Service
+			    ↓
+		       Database / Cache
+		       
 
-8. Benefits
-	Distributed tracing helps with:
-		Root-cause analysis
-		Finding performance bottlenecks
-		Monitoring microservice health
-		Understanding dependencies
-		Debugging production issues
-		Improving SLA compliance
-		Understanding user experience
+Client-server architecture separates the system into clients that initiate requests and servers that process those requests, enforce business rules, manage shared resources, and return responses. In production, this commonly evolves into 3-tier or N-tier architectures with load balancers, caches, databases, queues, and specialized services.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Microservices Architecture
+
+1. What is Microservices Architecture?
+	A microservices architecture structures an application as a collection of small, loosely coupled, independently deployable services.
+	Each service:
+		Has a specific responsibility
+		Can be developed independently
+		Can be deployed independently
+		Communicates through APIs
+		Can potentially use its own technology stack
+	                Application
+		            │
+	       ┌────────────┼────────────┐
+	       ↓            ↓            ↓
+	   User Service  Order Service  Payment Service
+	       │            │            │
+	      DB           DB           DB
+
+2. Why Microservices?
+	Independent Deployment
+		You can deploy one service without redeploying the entire application.
+		Order Service → deploy v2
+				   ↓
+		User Service → unaffected
+		Payment Service → unaffected
+	Independent Scaling
+		If one service receives heavy traffic, scale only that service.
+		User Service      → 2 instances
+		Order Service     → 10 instances
+		Payment Service   → 3 instances
+	Fault Isolation
+		Failure in one service doesn't necessarily bring down the entire application.
+	Technology Freedom
+		Different services can use technologies suited to their specific requirements.
+
+3. How to Decompose Services
+	The article recommends decomposing around business capabilities.
+	For an e-commerce system:
+		Product Catalog
+		Inventory
+		Orders
+		Delivery
+		Users
+		Recommendations
+		Reviews
+	Each capability can become a service.
+	important principle - Design services around business capabilities, not technical layers.
+	
+4. Don't Share Databases Directly
+	Bad
+		Service A ──→ Database A
+				 ↑
+				 │
+		Service B ───────┘
+		Service B directly accesses Service A's database.
+	Problem - DB Schema changes -> Service B breaks -> Service A can't change independtly
+	Better - Service B -> Service A API -> Database A
+	The service owns its data and exposes only the required API.
+	This preserves encapsulation and independent evolution.
+	
+5. Design APIs Carefully
+	A service should expose only what clients actually need.
+	Service
+	 ├── Internal implementation ❌
+	 ├── Internal DB structure  ❌
+	 └── Public API             ✓
+	Avoid exposing implementation details because clients may start depending on them.
+	Also choose communication protocols carefully. A tightly coupled protocol can make future changes difficult.
+	
+6. Decentralize Ownership
+	A team should ideally own its service end-to-end:
+		Team
+		 │
+		 ├── Develop
+		 ├── Test
+		 ├── Deploy
+		 ├── Monitor
+		 └── Maintain
+	This reduces dependencies on separate support teams.
+	you can use a message bus such as RabbitMQ, but don't too much business logic into a central bus.
+	
+7. Deployment
+	Consumer-Driven Contracts
+	If Service B depends on Service A:
+		Service B
+		   ↓
+		expects API contract
+		   ↓
+		Service A
+	A consumer-driven contract records what the consumer expects from the provider.
+	Before changing Service A:
+		Change API
+		    ↓
+		Run consumer contracts
+		    ↓
+		All pass?
+		    ↓
+		Deploy
+	This helps prevent one service's API changes from unexpectedly breaking another.
+	
+8. Containers
+	Multiple services on one OS
+			Server
+			 ├── Service A
+			 ├── Service B
+			 └── Service C
+		Problems:
+			Dependency conflicts
+			Harder independent scaling
+			Services can affect each other
+	Isolated Services - 
+		Container A → Service A
+		Container B → Service B
+		Container C → Service C
+
+9. Changing APIs in Production
+	Approach 1: API Versioning
+		/api/v1/orders
+		/api/v2/orders
+		Keep both versions temporarily.
+		consumer migrate - v1 → v2 Then remove v1. Problem: maintaining multiple versions becomes expensive.
+	Approach 2: New Endpoint
+		Instead of maintaining two complete API versions:
+			/api/orders
+			/api/orders/new-operation
+		Migrate consumers to the new endpoint and eventually remove the old one.
+		The article highlights this as easier to maintain because only one service version remains active.
 		
-9. Challenges
-	1. Instrumentation
-		Applications may need instrumentation so tracing information can be captured. Manual instrumentation can require development effort and can introduce mistakes.
-	2. Large Amount of Data
-		Large systems can generate huge numbers of traces.
-		Therefore, sampling is often required.
-	3. Head-Based Sampling
-		Decide whether to keep a trace at the beginning of the request.
-	4. Tail-Based Sampling
-		Make the sampling decision after seeing more of the trace.
+10. Standardization
+	With many independent teams, define common standards for:
+		API design
+		Error handling
+		Documentation
+		Testing
+		Metadata
+	Tools such as Swagger/OpenAPI can help document and test APIs.
+
+11. Service Discovery + API Gateway
+	As services increases:
+		Order
+		 ↓
+		Payment
+		 ↓
+		Inventory
+		 ↓
+		User
+		 ↓
+		Shipping
+	Finding service instances becomes difficult because hosts and ports can change dynamically.
+	
+	Service Discovery
+		Answers: "Where is the Payment Service currently running?"
+	API Gateway
+		Provides a common entry point:
+			                 ┌── User Service
+			Client → Gateway ├── Order Service
+					 ├── Payment Service
+					 └── Inventory Service
+		It can also handle things like authentication/authorization.
 		
-10. When Should You Use It?
-	Distributed tracing becomes particularly useful when:
-		You have microservices
-		Requests cross many services
-		You use serverless architectures
-		Debugging production latency
-		You need to identify root causes quickly
-		You need visibility into service dependencies
+12. Failure Handling
+	Microservices are not automatically resilient.
+	Failures can come from:
+		Network timeouts
+		Bugs
+		Dependency failures
+		Service crashes
+	A failure in one service shouldn't cascade through the entire system.
+	
+	Bulkhead 
+		Isolate resources so one failing component doesn't consume everything.
+			Service A → Pool A
+			Service B → Pool B
+			Service C → Pool C
+		If A fails:	
+			Pool A ❌
+			Pool B ✓
+			Pool C ✓
+	
+	Circuit Breaker
+		Failures
+		   ↓
+		Threshold exceeded
+		   ↓
+		Circuit OPEN
+		   ↓
+		Stop calling failing service
+		   ↓
+		Wait
+		   ↓
+		Test recovery
+		   ↓
+		CLOSED
 		
-Distributed tracing follows a request across multiple services using a unique Trace ID and connected Spans, allowing engineers to understand request flow, identify bottlenecks, and quickly find the root cause of failures in distributed systems.
+	This prevents repeated calls from overwhelming an unhealthy dependency.
+	
+13. Monitoring and Logging
+	Microservices create a major observability problem: 100 services * 10 instances * lots of logs, Good luck finding one request manually. Humanity has invented better ways.
+	
+	Centralized Logging
+		Service A ─┐
+		Service B ─┼──→ Log Aggregator → Search/Dashboard
+		Service C ─┘
+		
+		Logstash -> Elasticsearch -> Kibana
+	
+	Metrics
+		Aggregate things such as:
+			CPU
+			Memory
+			Request rates
+			Errors
+			Latency
+	Health Checks
+		Services should expose health endpoints so monitoring systems/load balancers can determine whether instances are healthy.
+		
+Microservices architecture divides an application into independently deployable services organized around business capabilities, with each service owning its responsibilities and exposing APIs while using mechanisms such as service discovery, API gateways, contracts, fault isolation, and centralized observability to operate reliably at scale.
