@@ -353,3 +353,124 @@ Microservices Architecture
 		Services should expose health endpoints so monitoring systems/load balancers can determine whether instances are healthy.
 		
 Microservices architecture divides an application into independently deployable services organized around business capabilities, with each service owning its responsibilities and exposing APIs while using mechanisms such as service discovery, API gateways, contracts, fault isolation, and centralized observability to operate reliably at scale.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Serverless Architecture
+
+1. What is Serverless Architecture?
+	Serverless doesn't mean there are no servers. Servers still exist, but the cloud provider manages them for you.
+	You focus on: Business Logic/code, Cloud Provider, Servers + scaling + Infrastructure
+	Common serverless building blocks:
+		FaaS: Functions as a Service
+		Managed databases
+		Object storage
+		API gateways
+		Event/message services
+		
+2. Traditional vs Serverless
+	Traditional
+		Application -> VM/Server -> OS -> Runtime -> Application.
+		You generally manage: Servers, OS, Capacity, Scaling, Patching, Infrastructure.
+	Serverless
+		Client -> API Gateway -> Function -> Database.
+		
+3. Function as a Service (FaaS)
+	The basic model: Request/Event -> Function -> Execute code -> Response.
+	A function is usually: Small -> Focused on one task -> Triggered by an event/request -> Short-lived -> Independently scalable.
+	Example - Image Uploaded -> Storage Event -> Resize Image Function -> Store Resized Image.
+	
+4. Event-Driven Nature
+	Serverless applications often work well with events.
+	User Uploads File -> Event -> Queue -> Function -> Process File.
+	Other triggers can include: HTTP requests, Database changes, Message queues, Scheduled jobs, File uploads, IOT events.
+	
+5. Automatic Scaling
+	One major advantage is that the platform can automatically create more function instances when traffic increases.
+	10 requests -> 2 function instances, 10,000 requests -> Many function instances
+	When traffic drops  - reduce the instances.
+	You don't have to manually provision servers for every traffic spike. Humanity has finally delegated some of its suffering to automation.
+
+6. Pay-per-Use
+	Traditional infrastructure often means: Server running 24*7 and pay continuously.
+	But Serverless generally follows: Function executes -> Pay for execution/resources.
+	
+7. Advantages
+	No Server Management
+		Cloud provider manages infrastructure.
+	Automatic Scaling
+		Functions can scale based on demand.
+	Faster Development
+		Developers focus primarily on application logic.
+	Cost Efficiency
+		You can pay based on actual usage rather than maintaining idle servers.
+	Built-in Availability
+		Cloud platforms can distribute function execution across infrastructure to provide resilience.
+	Easy Event Integration
+		Serverless integrates naturally with:
+			- Queues
+			- Storage
+			- Databases
+			- Events
+			- APIs
+			
+8. Disadvantages
+	Cold Start
+		If a function hasn't been used recently, starting an execution environment can add latency.
+		Request -> no warm instance -> Start environment -> Load application -> Execute. This is called a cold start.
+	Execution Limits
+		Functions may have restrictions on:
+		- Execution duration
+		- Memory
+		- CPU
+		- Temporary storage
+		- Request size
+	Statelessness
+		Functions should generally be treated as stateless.
+		Bad - Function A -> Local memory/session -> Function B
+		Better - Function A ─┐
+			 Function B ─┼→ Shared DB / Cache / Storage
+			 Function C ─┘
+	Vendor Lock-In
+		Using provider-specific services heavily can make migration difficult.
+		Application -> AWS-specific services -> Migration becomes harder.
+		This is one of the important architectural trade-offs.
+	Debugging
+		A distributed serverless system can contain:
+			API Gateway -> Function -> Queue -> Function -> Database -> Another Function.
+			Debugging the entire request path requires good: Logging, Metrics, Distributed tracing
+			Otherwise you're basically debugging a ghost through six cloud dashboards.
+			
+9. Serverless vs Containers
+	| 				| Serverless 		| Containers |
+	|---				|---			|---|
+	| Infrastructure management 	|Low 			| Higher |
+	| Scaling 			| Usually automatic 	| Usually configured |
+	| Deployment unit 		| Function 		| Container |
+	| Startup 			| Can have cold starts 	| Usually more predictable |
+	| Runtime control 		| Limited 		| High |
+	| Long-running workloads 	| Less suitable 	| Suitable |
+	| Cost model 			| Usage-based 		| Resource-based |
+	| Vendor dependency 		| Potentially higher 	| Usually lower |
+	
+	
+10. When to Use Serverless?
+	- APIs
+	- Webhooks
+	- Image processing
+	- Scheduled jobs
+	- Background processing
+	- Event processing
+	- File processing
+	- Lightweight automation
+	- Highly variable workloads
+
+11. When Not to Use It?
+	- Long-running processes
+	- Very low and predictable latency
+	- Heavy CPU workloads
+	- Specialized hardware
+	- Complete OS/runtime control
+	- Extremely high sustained traffic where serverless pricing may become less attractive
+	
+Serverless architecture is a cloud model where the provider manages the underlying infrastructure and automatically provisions resources to execute application code, allowing developers to focus on business logic while paying primarily for actual resource usage.
