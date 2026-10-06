@@ -474,3 +474,167 @@ Serverless Architecture
 	- Extremely high sustained traffic where serverless pricing may become less attractive
 	
 Serverless architecture is a cloud model where the provider manages the underlying infrastructure and automatically provisions resources to execute application code, allowing developers to focus on business logic while paying primarily for actual resource usage.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Event Driven Architecture
+
+1. What is Event-Driven Architecture?
+	EDA is an architecture where components communicate by producing and reacting to events.
+	An event represents something that happened in the system.
+	e.g - OrderCreated, PaymentCompleted, UserRegistered, DeviceConnected, FirmwareUpdated Instead of: Service A -> directly calls -> Service B.
+	we can have : Service A ->(Event) Event Broker -> Service B,C,D.
+	This creates loose coupling between services. Confluent
+	
+2. Main Components
+	Event Producer
+		Creates/publishes an event.
+		Order Service -> OrderCreated
+	Event Broker/Channel
+		Receives and distributes events.
+		e.g - Apache Kafka.
+	Event Consumer
+		Listens for events and performs some action.
+		OrderCreated
+		     ↓
+		 ┌───┴──────────┐
+		 ↓             	 ↓
+		Inventory     Notification
+		Service        Service
+	
+	The producer doesn't need to know which consumers exist. Confluent
+	
+3. How EDA Works
+	Typical flow : Something happens -> Producer creates event -> Event goes to broker -> Broker stores/routes event -> Interested consumers receive it -> Consumers process independently.
+	
+	e.g - Customer places order -> OrderCreated -> Kafka -> Inventory Service, Payment Service, Email Service.
+	One event can therefore trigger multiple independent workflows. Confluent
+
+4. EDA vs Request-Response
+	Traditional
+		Order Service ->(HTTP request) Inventory Service -> Response.
+		Order Service needs to know about Inventory Service.
+	Event-Driven
+		Order Service
+		      │
+		      │ OrderCreated
+		          ▼
+		    Kafka
+		   /  |  \
+		  ↓        ↓       ↓
+		Inv  Pay  Email
+		The producer doesn't need to know who consumes the event.
+		Result: loose coupling + independent scaling/deployment.
+
+5. Why Use EDA?
+	Loose Coupling
+		Services don't directly depend on each other's implementation.
+	Scalability
+		Consumers can scale independently.
+		Inventory → 5 instances
+		Email      → 20 instances
+		Analytics  → 3 instances
+	Real-Time Processing
+		Consumers can react as events occur.
+	Fault Tolerance
+		If a consumer is temporarily unavailable, durable event-streaming systems can retain events so the consumer can process them later. Confluent
+	Easy Integration
+		New consumers can be added without changing the producer.
+		Existing:
+			Order → Kafka → Inventory
+		Later:
+			Order → Kafka	→ Inventory
+				     	 → Analytics
+				     	 → Fraud Detection
+	
+	That's one of the nicest properties of event-driven systems. You can add another listener without making the original service panic about its family tree.
+
+6. Event Types / Patterns
+	Pub/Sub
+		One producer publishes an event and multiple consumers subscribe.
+		             ┌→ Consumer A
+		Producer → Broker → Consumer B
+			     └→ Consumer C
+	Event Streaming
+		Events are stored as a continuous stream that consumers can process. Kafka is commonly used for this model. Confluent
+	Event Sourcing
+		Instead of storing only the current state, store the sequence of events that produced that state.
+		AccountCreated -> MoneyDeposited -> MoneyWithdrawn -> Current Balance
+		The event history becomes the source of truth.
+	CQRS
+		Separate:
+			Command → Write side
+			Query   → Read side
+		EDA can work well with CQRS because events can propagate changes from the write side to read models.
+
+7. Event Schema
+	Events need a well-defined structure.
+	{
+	  "eventType": "OrderCreated",
+	  "orderId": "12345",
+	  "customerId": "789",
+	  "timestamp": "..."
+	}
+	Consumers need to understand the event format.
+	Therefore, schema management and compatibility are important in large event-driven systems. Confluent highlights Schema Registry as a mechanism for centralized schema management.
+	
+8. Event Ordering
+	One major challenge is event ordering.
+	Suppose: 
+		Event 1 → DeviceRegistered
+		Event 2 → DeviceDeleted
+	If they are processed in the wrong order:
+		DeviceDeleted -> DeviceRegistered. you can end up in nonsense
+		
+9. Eventual Consistency
+	EDA often means different services update their state asynchronously.
+		Example: Order DB -> OrderCreated -> Inventory Service -> Inventory DB.	
+	For a short period:
+		Order DB      → updated ✓
+		Inventory DB  → not yet updated
+	Eventually:
+		Both systems → consistent
+	
+	So EDA commonly trades immediate consistency for loose coupling and scalability. Confluent
+
+10. EDA + Microservices
+
+	             Event Stream
+		          │
+		┌─────────┼─────────┐
+		↓        	     ↓                  ↓
+	      Order    Payment   Inventory
+	     Service   Service    Service
+		│         │         │
+	       DB        DB        DB
+	Each microservice can:
+		- Publish events
+		- Consume events
+		- Process events independently
+		- Scale independently
+
+11. Disadvantages
+	EDA isn't magic pixie dust for distributed systems.
+	
+	Complexity 
+		You now have: 
+			Producers, Consumers, Broker, Schemas, Partitions, Retries, Dead-letter queues, Monitoring.
+		More moving parts = more things to operate.
+	Debugging
+		A single request may trigger many asynchronous events.
+		Tracing the full flow can be difficult.
+	Event Ordering
+		Maintaining correct ordering can be challenging.
+	Eventual Consistency
+		Different services may temporarily have different states.
+	Duplicate Processing
+		Consumers should often be designed to handle duplicate events safely, typically through idempotent processing.
+
+12. Kafka's Role
+	it's commonly used to implement EDA.
+	Basic model: Producer -> Kafka Topic -> Consumer Group -> Consumers.
+	Kafka provides durable event streams and allows multiple consumers to process events independently.
+	Kafka is infrastructure for moving and storing event streams. EDA is the broader architectural pattern. (They are not synonyms).
+
+
+Event-Driven Architecture is a distributed architecture in which services communicate asynchronously by publishing and consuming events through an event broker or stream, enabling loose coupling, independent scaling, real-time processing, and better fault isolation. Confluent
