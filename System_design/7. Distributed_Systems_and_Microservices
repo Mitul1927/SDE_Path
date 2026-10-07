@@ -638,3 +638,167 @@ Event Driven Architecture
 
 
 Event-Driven Architecture is a distributed architecture in which services communicate asynchronously by publishing and consuming events through an event broker or stream, enabling loose coupling, independent scaling, real-time processing, and better fault isolation. Confluent
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Peer to Peer Architecture (P2P)
+
+1. What is P2P?
+	Peer-to-Peer (P2P) is a network architecture where computers, called peers, communicate and share resources directly with each other.
+	Unlike client-server architecture:
+		Client → Server → Response
+	P2P looks more like:
+		Peer A ↔ Peer B
+		  ↕      	      ↕
+		Peer C ↔ Peer D
+	Each peer can potentially act as both a client and a server.
+	
+2. Client-Server vs P2P
+	Client-Server
+		Server
+	       /  |  \
+	      A   B   C
+	      The server provides services/resources.
+	P2P
+		A ─── B
+		│ \   │
+		│  \  │
+		C ─── D
+		Peers communicate directly.
+	
+	Main difference
+		Client-server is centralized, while P2P distributes responsibilities among participating nodes.
+		
+3. How P2P Works
+	A typical P2P network:
+		Peer joins network
+		       ↓
+		Find other peers
+		       ↓
+		Connect to peers
+		       ↓
+		Exchange data/resources
+		       ↓
+		Share resources with others
+	A peer might simultaneously:
+		Download data ← Peer B
+		Upload data   → Peer C
+		Discover      → Peer D
+		
+4. Types of P2P Networks
+	A. Pure P2P
+		Every peer has roughly equal responsibilities.
+		A ↔ B ↔ C
+		↕       	  ↕
+		D ↔ E ↔ F
+		There is no central server controlling the network.
+	B. Hybrid P2P
+		A central server may help with things such as:
+			- Peer discovery
+			- Authentication
+			- Metadata
+		But actual data transfer happens directly between peers.
+		       Directory Server
+			/     |     \
+		       A      B      C
+
+		A ←────────→ B
+	C. Structured P2P
+		Peers are organized according to a defined structure, often using a Distributed Hash Table (DHT).
+		key -> DHT -> Find responsible peer.
+		This makes searching for data more predictable.
+	D. Unstructured P2P
+		Peers connect more randomly.
+		Searching can involve querying multiple peers.
+			A
+			├── B
+			├── C
+			└── D
+			     ├── E
+			     └── F
+
+5. Advantages of P2P
+	Scalability
+		As peers join, they can also contribute resources.
+		More peers
+		    ↓
+		More resources
+		    ↓
+		Potentially more capacity
+	No Single Central Server
+		There isn't necessarily one server whose failure destroys the whole system.
+	Resource Sharing
+		Peers can share: 
+			Files, Storage, Bandwidth, Processing power
+	Cost
+		Infrastructure requirements can be lower because participants contribute resources.
+	Fault Tolerance
+		The network can continue operating even when some peers disappear.
+
+6. Disadvantages
+	Security
+		Peers may not be trustworthy.
+		Potential problems: Malicious notes, Fake data, Malware, Unauthorized access.
+	Management
+		There is no single central authority controlling everything.
+	Data Availability
+		A resource may disappear if the peers hosting it leave the network.
+	Performance
+		Finding a particular resource can be slower in unstructured P2P networks.
+	Network Churn
+		Peers can continuously: Join -> Leave -> Rejoin -> Disappear again.
+		This constant change is called churn and makes maintaining the network harder.
+		
+7. Common P2P Use Cases
+	P2P is used in systems such as:
+		- File sharing
+		- Blockchain networks
+		- Cryptocurrency networks
+		- Content distribution
+		- Distributed storage
+		- Communication systems
+		
+8. P2P in Blockchain
+	Blockchain is a particularly useful system-design example.
+		Node A ↔ Node B
+		  ↕      	       ↕
+		Node C ↔ Node D
+	Nodes can:
+		- Discover other nodes
+		- Broadcast transactions
+		- Propagate blocks
+		- Validate information
+		- Maintain copies of the ledger
+	There is no single central server responsible for distributing the entire blockchain.
+	
+9. P2P vs Distributed Systems
+	Don't treat these as identical.
+	Distributed system is the broader concept:
+		Multiple computers cooperate to provide a system/service.
+	P2P is a particular architectural approach where participating nodes communicate and share responsibilities more directly.
+	So: 
+		Distributed Systems
+			│
+			├── Client-Server
+			├── Microservices
+			├── P2P
+			└── Other architectures
+			
+
+                 P2P
+                  │
+        ┌─────────┴─────────┐
+        	↓                  	         ↓
+   No central          Peers communicate
+   authority           directly
+        │                   │
+        └─────────┬─────────┘
+                  	    ↓
+          Resource Sharing
+                  │
+       ┌──────────┼──────────┐
+               ↓          	    ↓                     ↓
+   Scalable    Resilient   Distributed
+   
+
+Peer-to-peer architecture is a decentralized networking model in which participating nodes can both provide and consume resources, allowing them to communicate directly without relying entirely on a central server.
