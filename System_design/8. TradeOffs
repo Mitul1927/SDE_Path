@@ -1,0 +1,395 @@
+Top 15 tradeoffs
+
+1. Scalability vs Performance
+	Scalability: ability to handle increasing workload.
+	Performance: how quickly the system handles a request/workload.
+	Adding more machines improves scalability but can introduce coordination/network overhead.
+	Optimizing heavily for speed on one machine may limit future scaling.
+	
+2. Vertical vs Horizontal Scaling
+	Vertical
+		Increase resources of one machine:
+		Pros: simple
+		cons: Hardware limit + potential single point of failure
+	Horizontal
+		Add more machines: server A,B,C.
+		Pros: Better scalability and fault tolerance.
+		Cons: Distributed-system complexity.
+
+3. Latency vs Throughtput
+	Latency: time taken for one operation.
+	Throughput: amount of work/data processed per unit time.
+	Remember: Latency = how fast? Throughput = How much?
+	
+4. SQL vs NoSQL
+	SQL
+		Structured schema
+		Strong transactions
+		Powerful queries
+		Examples: PostgreSQL, MySQL
+		Often harder to scale horizontally.
+	NoSQL
+		Flexible schema
+		Designed for distributed/high-scale workloads
+		Examples: Cassandra, DynamoDB
+		Often trades some relational querying/transaction guarantees for scalability and flexibility.
+5. Consistency vs Availability
+	Consistency
+		Every read sees the latest valid value.
+	Availability
+		Every request receives a response, even when some nodes fail.
+	During a network partition, a distributed system must choose between maintaining strong consistency and availability.
+	Network Partition -> Consistency OR Availability
+	
+6. Strong vs Eventual Consistency
+	Strong Consistency
+		After a write:: write X -> Next read -> X
+		Useful for: Banking, Inventory, Financial transactions
+	Eventual Consistency
+		updates propagate asynchronously:
+			Write X
+			 ↓
+			Some nodes → X
+			Some nodes → old value
+			 ↓
+			Eventually → all nodes see X
+			
+7. Read-Through vs Write-Through Cache
+	Read-Through
+		Request -> Cache ->(miss) -> Database -> Cache -> Response
+		Good for read-heavy workloads
+	Write-Through
+		Write -> Cache
+		    |--> Database
+		Both are updated together.
+		
+8. Batch vs Stream Processing
+	Batch
+		Collect data and process it periodically.
+		Data → Data → Data
+			  ↓
+		       Batch
+			  ↓
+		       Process
+	Stream
+		Process data as it arrives.
+		Event → Process
+		Event → Process
+		Event → Process
+	Batch = large chunks
+	Stream = continuous processing
+	
+9. Synchronous vs Asynchronous
+	Synchronous
+		Caller waits:
+			Reqeust -> Process -> Response
+		Good when the result is immediately required
+	Asynchronous
+		Caller doesn't wait:
+			Request -> Queue -> Quick response -> Background processing
+		Good for emails , image processing , notifications, long-running jobs.
+		
+10. Stateful vs Stateless
+	Stateful
+		Server remembers previous interactions.
+		User → Server
+			       ↓
+			    Session
+			       ↓
+			Next request uses state
+	Stateless
+		Each request contains everything needed.
+		Request 1 → independent
+		Request 2 → independent
+		Request 3 → independent
+	Stateless systems are generally easier to horizontally scale because any instance can handle any request.
+	
+11. Long Polling vs WebSockets
+	Long Polling
+			Client → Request
+			  ↓
+		       Server waits
+			  ↓
+		       New data
+			  ↓
+		       Response
+			  ↓
+		Client sends another request
+	WebSockets
+		Persistent two-way connection:
+		Client ↔ Server
+		               ↕
+		   Real-time data
+	Long polling: HTTP-based workaround for near-real-time updates.
+	WebSockets: persistent, full-duplex communication.
+	
+12. Normalization vs Denormalization
+	Normalization
+		Split data into related tables.
+		Benefits:
+		- Less duplication
+		- Better data integrity
+		- Easier updates
+	Denormalization
+		Duplicate/combine data to make reads faster.
+		Post + Latest Comments
+		Trade-off
+			Normalization
+				→ Less redundancy
+				→ More joins
+
+			Denormalization
+				→ Faster reads
+				→ More redundancy
+				
+13. Monolith vs Microservices
+	Monolith
+		┌─────────────────────┐
+		│ Entire Application  │
+		└─────────────────────┘
+		Pros:
+			- Simple
+			- Easy deployment
+			- Easy local development
+		Cons:
+			- Harder to independently scale/deploy components as the system grows.
+	Microservices
+		Order ─ Payment ─ User
+		  │        │        │
+		 DB       DB       DB
+		 Pros:
+			- Independent deployment
+			- Independent scaling
+			- Team/service ownership
+		Cons:
+			- Network communication
+			- Distributed transactions
+			- Monitoring complexity
+			- Data consistency problems
+			
+14. REST vs GraphQL
+	REST
+	Multiple endpoints:
+		GET /users/123
+		GET /users/123/orders
+		GET /users/123/profile
+
+		Pros:
+		- Simple
+		- Mature
+		- Easy to understand
+	GraphQL
+	Client specifies exactly what it wants:
+		Query
+		 ├── user
+		 ├── orders
+		 └── profile
+
+		Pros:
+		- Flexible data fetching
+		- Can reduce number of requests
+		- Avoids some over-fetching
+		Cons:
+		- More complexity
+		- Steeper learning curve
+		- Requires careful schema/query management.
+		
+15. TCP vs UDP
+	TCP
+		- Connection-oriented
+		- Reliable
+		- Ordered
+		- Retransmits lost packets
+		Send → Confirm → Retry if needed
+
+		Good for:
+		- Web traffic
+		- Email
+		- File transfer
+	UDP
+		- Connectionless
+		- Lower overhead
+		- No guarantee of delivery/order
+		- Faster for time-sensitive workloads
+		Good for:
+		- Real-time gaming
+		- Live streaming
+		- Some real-time communication
+		
+	TCP: "Make sure it arrives."
+	UDP: "Send it quickly and let's hope for the best."
+	
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Concurrency Vs Parallelism
+
+1. What is Concurrency?
+	Concurrency means managing multiple tasks that make progress during overlapping periods of time.
+	Tasks can take turns executing. They don't need to run at the exact same instant.
+	Example: A web server handles many requests while waiting for database responses.
+	Goal: Keep the system responsive and avoid wasting time while tasks wait for I/O.
+	Common techniques:
+		- Threads and thread pools
+		- Async/await
+		- Event loops
+		- Coroutines
+		- Message queues
+		
+2. What is Parallelism?
+	Parallelism means executing multiple tasks at the exact same time, typically using multiple CPU cores, processors, machines, or GPUs.
+	Example: Splitting a large dataset into chunks and processing them simultaneously.
+	Goal: Finish computationally intensive work faster.
+	Common applications:
+		- Image and video processing
+		- Machine learning
+		- Data analytics
+		- Compression
+		- Large-scale calculations
+		
+3. Key Differences
+	Feature			Concurrency				Parallelism
+	
+	Meaning			Multiple tasks make progress		Multiple tasks execute simultaneously
+	Main goal		Responsiveness				Faster computation
+	CPU cores		Can work on one core			Requires multiple execution units
+	Best suited for		I/O-bound tasks				CPU-bound tasks
+	Example			Handling 10,000 open connections	Processing data on 8 CPU cores
+	Common techniques	Async I/O, threads, event loops		Multithreading, multiprocessing, GPU computing
+	
+	These concepts are different, although modern applications frequently use both. 
+	
+4. Four Possible Scenarios
+	1. Neither concurrent nor parallel
+		One task completes before the next starts.
+	2. Concurrent, not parallel
+		Tasks take turns on a single CPU core.
+	3. Parallel execution
+		Independent pieces of work run simultaneously on multiple cores.
+	4. Concurrent and parallel
+		Multiple tasks are in progress, and multiple tasks execute simultaneously across cores.
+	Interview nuance: Parallelism requires independent pieces of work that can run at the same time. A single job can be divided into such pieces even if there is only one top-level job.
+	
+5. Real-World Examples
+	Web Server
+		Request A → Waiting for database
+		Request B → Processing response
+		Request C → Waiting for API
+		Concurrency lets the server work on other requests instead of sitting idle while one request waits.
+		
+	Video Processing
+		Frame 1 → Core 1
+		Frame 2 → Core 2
+		Frame 3 → Core 3
+		Frame 4 → Core 4
+		Parallelism lets multiple frames be processed simultaneously.
+		
+	E-commerce Application
+		Request
+		   ├── Fetch user details
+		   ├── Fetch product details
+		   └── Fetch delivery estimate
+		These independent API calls can run concurrently. CPU-intensive calculations, if needed, can also run in parallel.
+		
+6. Common Mistakes
+	- Concurrency is not parallelism. A single-core CPU can handle concurrent tasks without executing them simultaneously.
+	- Async does not automatically mean parallel. An event loop can handle many tasks on one thread.
+	- More threads don't always mean better performance. Too many threads can increase memory usage and context-switching overhead.
+	- Parallelism is not always faster. Small tasks may cost more to split and coordinate than they save.
+	- More concurrency can overload a database. Use connection pools, limits, timeouts, and backpressure. 
+	
+Concurrency is the ability to manage multiple tasks whose execution overlaps in time, while parallelism is the simultaneous execution of multiple tasks. Concurrency improves responsiveness, especially for I/O-bound workloads, whereas parallelism can speed up CPU-intensive workloads by using multiple processing units.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Long Polling vs Web Sockets
+
+1. What problem do they solve?
+	Normal HTTP follows a request-response model. The client sends a request, and the server responds. But what happens when the server needs to notify the client immediately when something changes?
+	Examples:
+		- Chat messages
+		- Live notifications
+		- Payment status updates
+		- Device status monitoring
+		- Live dashboards
+		
+2. Long Polling
+	Long polling uses normal HTTP requests that the server keeps open until new data arrives or a timeout occurs.
+	Client sends http request -> Server waits for new data -> New data arrives , response sent -> Client sends another request.
+	Advantages
+		- Works with standard HTTP infrastructure.
+		- Relatively simple to implement.
+		- Suitable for occasional updates.
+		- Can work as a fallback when WebSockets are unavailable.
+	Disadvantages
+		- A new request is needed after every response.
+		- Each waiting client occupies a connection.
+		- Timeouts and reconnections need careful handling.
+		- Less efficient for frequent updates.
+	Example: A client waits for a device's firmware update status and requests the next update after receiving a response.
+	
+3. WebSockets
+	WebSockets establish a persistent, full-duplex connection that allows both client and server to send messages at any time.
+	client (Persistent two-way connection) WebSocker Server  
+	Both sides can send multiple messages without creating a new HTTP request for each message.
+	Advantages
+		- Low overhead for frequent messages.
+		- Low-latency, two-way communication.
+		- Well suited to interactive applications.
+		- One connection can carry many messages.
+	Disadvantages
+		- Requires connection lifecycle management.
+		- Reconnection, heartbeats and authentication need careful handling.
+		- Load balancing and deployment are more complex.
+		- Disconnected clients can miss messages unless replay is implemented.
+		
+	Example: A remote device-management dashboard where the server sends live device status while the client sends commands over the same connection.
+	
+4. Key Differences
+	Feature				Long Polling				WebSockets
+	
+	Protocol			HTTP request-response			WebSocket protocol after HTTP upgrade
+	Communication			Client initiates each request		Both sides can send anytime
+	Connection			Repeated waiting requests		One persistent connection
+	Message overhead		Higher					Lower for frequent messages
+	Latency				Low when a request is waiting		Generally very low
+	Scaling				Waiting requests consume resources	Persistent connections consume resources
+	Complexity			Lower					Higher
+	Best use case			Occasional updates			Frequent, interactive updates
+	
+5. Reliability: An Important Detail
+	Neither approach automatically guarantees that every message will be received.
+	Server sends update -> Client disconnects -> Update is missed
+	A reliable design should use:
+		- Event IDs/cursors: Track the last event received.
+		- Persistent event storage: Keep important events for later retrieval.
+		- Reconnection logic: Restore communication after a disconnect.
+		- Idempotency: Handle duplicate events safely.
+		- Heartbeats: Detect broken connections.
+	The real-time connection delivers updates; your database or event log should remain the source of truth.
+	
+6. When Should You Use Each?
+
+	Choose Long Polling when
+		- Updates are occasional.
+		- Standard HTTP compatibility matters.
+		- Simplicity is more important than high-frequency messaging.
+		- You need a fallback communication method.
+
+	Choose WebSockets when
+		- Both sides send frequent messages.
+		- Low latency matters.
+		- You need chat, collaboration or live device control.
+		- You can manage persistent connections at scale.
+	
+One extra option: Server-Sent Events (SSE) is often simpler when the server only needs to stream updates to the browser, such as notifications or progress updates.
+
+Long polling delivers near-real-time updates through repeated HTTP requests that remain open until data arrives, whereas WebSockets provide a persistent, bidirectional communication channel. Long polling favors simplicity and compatibility; WebSockets favor frequent, low-latency interaction.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Batch Processing vs Stream Processing
+
+1. What is Batch Processing?
+	Batch processing collects data over a period of time and processes it together as a group.
+	Example: Generating daily sales reports.
+	Collect data over time -> Store data in a batch -> Process all data together -> Generate results
