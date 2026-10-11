@@ -393,3 +393,119 @@ Batch Processing vs Stream Processing
 	Batch processing collects data over a period of time and processes it together as a group.
 	Example: Generating daily sales reports.
 	Collect data over time -> Store data in a batch -> Process all data together -> Generate results
+	Characteristics
+		- Processes accumulated data at scheduled intervals.
+		- High throughput for large datasets.
+		- Higher latency because processing may wait until the batch is ready.
+		- Suitable for finite datasets and bulk operations.
+	Examples
+		- Monthly payroll
+		- Daily billing and reports
+		- Large-scale ETL jobs
+		- Historical data analysis
+		
+2. What is Stream Processing?
+	Stream processing processes data continuously as events arrive, usually with low latency.
+	Example: Detecting suspicious credit card transactions immediately.
+	Event 1 -> Process, Event 2 -> Process, Event 3 -> Process , Immediate output/action.
+	Characteristics
+		- Processes events as they arrive.
+		- Low latency, often milliseconds to seconds.
+		- Supports continuous, potentially unbounded data.
+		- Often maintains state for aggregations and event processing.
+	Examples
+		- Real-time fraud detection
+		- IoT sensor monitoring
+		- Live dashboards
+		- Log and clickstream analysis
+		
+	Important: Kafka is primarily an event-streaming platform. Processing logic can run in Kafka Streams, Flink, or other consumers.
+	
+3. Key Differences
+	Feature				Batch Processing			Stream Processing
+	
+	Processing			Groups of data				Continuous events
+	Latency				Higher					Lower
+	Data				Usually bounded				Often unbounded
+	Throughput			High for bulk jobs			High continuous throughput
+	Execution			Scheduled or triggered			Continuous/event-driven
+	Complexity			Often simpler				More complex state and recovery
+	Example				Daily sales report			Live fraud detection
+	
+4. Batch Processing Workflow
+	Data Sources
+	     ↓
+	Collect and Store
+	     ↓
+	Validate / Clean
+	     ↓
+	Scheduled Batch Job
+	     ↓
+	Transform / Aggregate
+	     ↓
+	Database / Data Warehouse
+	     ↓
+	Reports
+	
+	Main challenge: Data may become stale while waiting for the next batch. Large jobs can also create resource spikes, and failures may require retrying some or all of the work.
+	
+5. Stream Processing Workflow
+	Event Sources
+	     ↓
+	Kafka / Message Broker
+	     ↓
+	Stream Processor
+	     ↓
+	Filter / Aggregate / Enrich
+	     ↓
+	Database / Dashboard / Alert
+	
+	Main challenge: The system must handle events continuously while managing failures, duplicate events, event ordering, and state recovery.
+	
+6. Windowing in Stream Processing
+	Stream processors often group events into time windows to calculate useful metrics.
+	Example: Count device disconnections in the last five minutes.
+		Events arrive continuously
+			  ↓
+		Five-minute window
+			  ↓
+		Count disconnections
+			  ↓
+		Alert if threshold exceeded
+	Common window types include:
+		- Tumbling window: Fixed, non-overlapping intervals.
+		- Sliding window: Windows overlap as time advances.
+		- Session window: Groups events based on periods of activity separated by inactivity.
+		
+7. Micro-Batch Processing
+	Micro-batch processing sits between traditional batch and continuous streaming.
+	Instead of processing one event at a time, it processes small groups of events at short intervals.
+	Events arrive
+	     ↓
+	Collect for 1 second
+	     ↓
+	Process small batch
+	     ↓
+	Publish results
+	     ↓
+	Repeat
+	It can provide near-real-time results while retaining some of the simplicity of batch processing. Spark Structured Streaming supports a micro-batch execution model.
+	
+8. How to Choose?
+
+	Choose Batch Processing when
+		- Results can wait minutes or hours.
+		- You process large historical datasets.
+		- You generate reports or perform scheduled ETL.
+		- Simplicity and bulk efficiency matter.
+
+	Choose Stream Processing when
+		- Decisions must happen quickly.
+		- Data arrives continuously.
+		- You need immediate alerts or live metrics.
+		- Events must trigger downstream actions.
+	
+	Many real systems use both. For example, a payment platform can use stream processing to detect fraud immediately and batch processing to generate daily financial reports.
+	
+
+Batch processing processes accumulated data in groups, making it suitable for bulk analytics and scheduled jobs. Stream processing handles events continuously as they arrive, making it suitable for real-time analytics, monitoring, and fraud detection. The right choice depends primarily on latency requirements, workload characteristics, and operational complexity.
