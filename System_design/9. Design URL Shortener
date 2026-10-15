@@ -1,0 +1,117 @@
+Design a URL Shortener
+
+1. What is a URL shortener?
+	A service that converts a long URL into a short code and redirects users to the original URL when the short link is accessed.
+	Example: https://example.com/products/mobile/12345 → short.ly/aB12cd
+	
+2. Requirements
+	Functional requirements
+		- Generate a short URL for a long URL.
+		- Redirect short URLs to their original destinations.
+		- Support optional custom aliases.
+		- Support link expiration.
+		- Track basic click counts.
+	Non-functional requirements
+		- High availability and low redirect latency.
+		- Unique short codes with no collisions.
+		- Scalability for high read traffic.
+		- Durable storage so mappings are not lost.
+
+3. High-level architecture
+	Client/Browser -> Load Balancer -> Write Service -> Redis Cache + Database
+				|->	Read Service -> Redis Cache + Database.
+	
+	The write and read services can scale independently. Redirects dominate traffic, so optimizing the read path matters most.
+	
+4. Back-of-the-envelope estimation
+	Metric				Estimate
+	
+	New URLs per day		10 million
+	Redirects per day		1 billion
+	Read-to-write ratio		100:1
+	Average write throughput	~115 QPS
+	Average redirect throughput	~11,574 QPS
+	
+	QPS means queries or requests per second. Peak traffic can be several times the average, so capacity planning needs headroom.
+	
+5. Core APIs
+	Method		Endpoint			Purpose
+	
+	POST		/shorten			Create a short URL
+	GET		/{short_code}			Redirect to original URL
+	GET		/analytics/{short_code}		Retrieve click statistics
+	
+	Common responses:
+	- 302 Found: Temporary redirect.
+	- 301 Moved Permanently: Permanent redirect, often cached by browsers.
+	- 404 Not Found: Short code does not exist.
+	- 410 Gone: Link has expired.
+	- 409 Conflict: Custom alias is already taken.
+	
+6. Short-code generation strategies
+	Approach			How it works							Main trade-off
+	
+	Hash + Base62			Hash the URL, shorten the result, then encode it.		Same input can produce the same code, but truncation can cause collisions.
+	Global counter + Base62		Generate a unique integer ID and encode it.			Simple and unique, but a centralized counter can become a bottleneck.
+	Distributed ID generator	Generate IDs using timestamp, worker ID, and sequence number.	Scales well, but requires coordination and careful clock handling.
+	
+	Base62 encoding uses A-Z, a-z, and 0-9.
+		- 6 characters provide (62^6 approx 56.8) billion combinations.
+		- 7 characters provide (62^7 approx 3.5) trillion combinations.
+		
+	Important: Base62 is an encoding scheme, not an ID-generation algorithm. It converts an existing number into a shorter representation.
+	
+7. Database design
+	A URL mapping record can contain:
+		- short_code (primary key)
+		- long_url
+		- user_id
+		- created_at
+		- expires_at
+		- click_count
+		- is_custom
+	
+	Database choice: A NoSQL database such as DynamoDB or Cassandra can work well for billions of simple key-value lookups. SQL can also be appropriate depending on consistency, query, and operational requirements.
+	The key design principle is to index short_code for fast lookups.
+	
+8. Making redirects fast
+	Use a cache-aside lookup strategy:
+		Incoming short URL -> CDN/Edge Cache -> Redis/Memcached -> Database on cache miss. (Store successful lookups in the cache for future requests.)
+	
+	CDN: Serves cached redirects close to users.
+	Redis: Reduces repeated database lookups.
+	Horizontal scaling: Add redirect-service instances as traffic grows.
+	Expiration-aware TTL: Never cache a link beyond its remaining lifetime.
+	
+	Use 302 by default if links may change or click tracking matters. A 301 can reduce server traffic, but browser caching may bypass your service on subsequent visits.
+	
+9. Custom aliases and expiration
+	Custom aliases
+		- Validate allowed characters and length.
+		- Reserve application paths such as /admin and /login.
+		- Enforce uniqueness atomically in the database. A separate “check, then insert” can fail when two users claim the same alias simultaneously.
+		
+	Expiration
+		- Check expires_at during redirects for immediate enforcement.
+		- Run periodic background cleanup to delete or archive old links.
+		- Ensure cache TTLs respect the link's expiration time.
+		
+10. Click analytics at scale
+	Don't make every redirect wait for a database update. The user wants their destination, not a committee meeting about the click counter.
+	
+	Approach						Best for				Trade-off
+	
+	Direct increment					Low traffic				Simple, but creates heavy write load
+	Buffered counting with Redis				High traffic				Efficient, but counts may lag
+	Event streaming with Kafka and stream processing	Large-scale, detailed analytics		Highly scalable, but more infrastructure and complexity
+	
+Flow - 
+	1. Clarify functional and non-functional requirements.
+	2. Estimate reads, writes, storage, and peak QPS.
+	3. Separate the write path from the read path.
+	4. Generate unique short codes and persist mappings.
+	5. Optimize redirects with CDN and Redis caching.
+	6. Handle uniqueness, expiration, availability, and analytics.
+	7. Explain trade-offs, especially 301 vs 302, hash vs counter, and direct vs asynchronous click counting.
+	
+Build a highly available URL mapping service with unique short-code generation, durable storage, a heavily cached redirect path, and asynchronous analytics.
