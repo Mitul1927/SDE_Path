@@ -1,0 +1,112 @@
+Design Instagram
+
+1. Requirements
+	Functional requirements
+		- Upload photos and videos with captions.
+		- Follow and unfollow users.
+		- Like, comment on, and share posts.
+		- View a personalized news feed.
+		- Search users and hashtags.
+		- Support multiple media files per post.
+	Non-functional requirements
+		- Low latency, especially for feed loading.
+		- High availability and scalability.
+		- High durability for uploaded media.
+		- Eventual consistency is acceptable for feeds and engagement counts.
+		
+2. High-level architecture
+	Mobile / Web Client -> API Gateway / Load Balancer -> User Service, Post Service, Feed Service, Engagement Service, Search Service, Kafka / Message Queue -> Databases + Redis Cache + Object Storage + CDN.
+	
+3. Main components
+	Component			Responsibility
+	
+	API Gateway			Authentication, rate limiting, routing
+	User Service			Profiles and follow relationships
+	Post Service			Creating posts and storing metadata
+	Feed Service			Building and retrieving personalized feeds
+	Engagement Service		Likes, comments, and shares
+	Search Service			Searching users, posts, and hashtags
+	Kafka				Asynchronous event processing
+	Object Storage			Storing original media files
+	CDN				Delivering media quickly worldwide
+	Redis				Caching feeds, popular posts, and counts
+	
+4. Capacity estimation
+	The blog uses illustrative assumptions for a large-scale platform. These are estimates, not verified current Instagram production metrics.
+	
+	Metric					Example estimate
+	
+	Monthly active users			2 billion
+	Daily active users			500 million
+	Media uploads per day			100 million
+	Feed items viewed per day		50 billion
+	New media storage per day		280 TB
+	Post metadata storage per year		90 TB
+	
+	Key takeaway: Feed reads and media storage dominate the system. Therefore, caching, object storage, and CDN delivery are critical.
+	
+5. Database design
+	Use different storage systems for different workloads rather than forcing everything into one database.
+	
+		- SQL (PostgreSQL/MySQL): Users, posts, media metadata, comments, and follow relationships.
+		- NoSQL (Cassandra/DynamoDB): High-volume distributed data and feed storage.
+		- Redis: Hot feeds, popular posts, and frequently accessed counters.
+		- Elasticsearch: Full-text search, usernames, and hashtags.
+		- Object storage (S3/GCS): Actual photos and videos.
+		
+	Important: Store media files in object storage, not directly in relational database rows. Store their URLs or object keys in the database.
+	
+6. Photo/video upload flow
+	1. Client requests an upload from the Post Service.
+	2. Backend generates a pre-signed URL for object storage.
+	3. Client uploads the media directly to object storage.
+	4. Client confirms completion; backend saves post and media metadata.
+	5. Post Service publishes a new-post event to Kafka.
+	6. Feed Service asynchronously updates followers' feeds.
+	7. Users download media through the CDN.
+	
+	Why direct upload? It prevents application servers from becoming a bottleneck when handling large files.
+	
+7. News feed generation: the most important concept
+
+	There are two main approaches.
+	A. Fan-out-on-write (Push)
+		When a user publishes a post, the Feed Service pushes the post reference into their followers' feed lists.
+		Example: A user with 500 followers publishes one post. The system updates roughly 500 feed entries.
+		- Advantage: Very fast feed reads.
+		- Disadvantage: High write amplification for users with millions of followers.
+
+
+	B. Fan-out-on-read (Pull)
+		When someone requests their feed, the system fetches posts from followed accounts and merges them dynamically.
+		- Advantage: Avoids writing a post into millions of feed lists.
+		- Disadvantage: More work during feed reads, potentially increasing latency.
+
+
+	C. Hybrid approach
+		Use push for ordinary accounts and pull for celebrities or high-follower accounts. Merge the results when the feed is requested.
+		Why it works: It balances fast reads against excessive writes.
+		
+8. Search and engagement
+	Search flow
+		1. User or post metadata is stored in the database.
+		2. Kafka publishes an event.
+		3. Search Service consumes it and updates Elasticsearch.
+		4. Queries check Redis first, then Elasticsearch on a cache miss.
+		5. Popular results can be cached.
+	Likes and comments
+		- Process requests through the Engagement Service.
+		- Publish events to Kafka for asynchronous database updates.
+		- Cache popular engagement counts and frequently viewed comments.
+		- Make operations idempotent where retries could create duplicate likes or comments.
+		
+9. Scaling, availability, and durability
+	- Horizontal scaling: Run multiple service instances behind load balancers.
+	- Sharding: Partition large datasets by user ID, post ID, or another suitable key.
+	- Replication: Keep redundant database copies and deploy across availability zones or regions.
+	- Failover: Switch to healthy replicas when components fail.
+	- Circuit breakers: Prevent cascading failures when a dependency is unavailable.
+	- Backups and recovery: Protect against accidental deletion and data loss.
+	- CDN caching: Serve popular media near users and reduce origin traffic.
+	
+Design Instagram around scalable media storage and CDN delivery, a hybrid push/pull news feed, asynchronous event processing, and specialized databases for each workload.
