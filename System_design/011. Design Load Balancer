@@ -1,0 +1,151 @@
+Designing Load Balancer
+
+1. What is a load balancer?
+	A load balancer distributes incoming traffic across multiple backend servers so that no single server becomes overloaded.
+
+	Why do we need it?
+		- Scalability: Add more backend servers as traffic grows.
+		- Availability: Stop sending requests to unhealthy servers.
+		- Performance: Distribute workload to reduce bottlenecks.
+		- Flexibility: Add, remove, or replace servers without changing the client-facing endpoint.
+		
+	Examples: NGINX, HAProxy, AWS Elastic Load Balancer.
+	
+2. High-level architecture
+	Clients -> Load Balancer -> Server A
+			|-> Server B
+			|-> Servier C
+			
+3. Requirements
+	Functional requirements
+		- Distribute traffic using configurable algorithms.
+		- Monitor backend health and remove unhealthy servers from rotation.
+		- Support sticky sessions when required.
+		- Support SSL/TLS termination.
+		- Handle Layer 4 and Layer 7 traffic.
+		
+	Non-functional requirements
+		- High availability, with no single point of failure.
+		- Minimal added latency.
+		- High throughput and horizontal scalability.
+		- Fast failure detection and recovery.
+		
+	target is 1 million requests per second at peak and 99.99% availability. These are design assumptions, not universal requirements.
+	
+4. Layer 4 vs Layer 7 load balancing
+	Feature			Layer 4 (Transport)				Layer 7 (Application)
+	
+	Routing based on	IP address, port, TCP/UDP			HTTP path, headers, host, cookies
+	Protocol awareness	Doesn't inspect application-level content	Understands HTTP requests
+	Performance		Generally lower overhead			More processing overhead
+	Use cases		TCP services, databases, game servers		Web applications, APIs, path-based routing
+	Examples		AWS Network Load Balancer			AWS Application Load Balancer, NGINX
+	
+	Remember: Layer 4 chooses based on connection-level information; Layer 7 can make decisions based on the actual HTTP request.
+	
+5. Load balancing algorithms
+	The algorithm decides which backend receives the next request. Choose based on workload, not because the name sounds impressive.
+	
+	Algorithm			How it works							Best use case
+	
+	Round Robin			Sends requests to servers in sequence.				Servers with similar capacity and request costs
+	Weighted Round Robin		Sends proportionally more requests to higher-weight servers.	Servers with different capacities
+	Least Connections		Chooses the server with the fewest active connections.		Requests with variable processing times
+	Weighted Least Connections	Considers both server capacity and active connections.		Mixed-capacity production servers
+	IP Hash				Uses the client's IP to select a backend.			Basic session affinity
+	Consistent Hashing		Minimizes remapping when servers are added or removed.		Caches and frequently changing backend pools
+	
+	Quick rule:
+		- Identical servers? Round Robin is often enough.
+		- Different capacities? Weighted Round Robin.
+		- Uneven request durations? Least Connections.
+		- Frequent scaling with cache locality? Consistent Hashing.
+		- Need session persistence? Cookie-based stickiness is generally more reliable than IP Hash.
+		
+6. Core architecture components
+	The design separates into two planes.
+	
+		Data plane
+			Handles incoming traffic on the critical path.
+				- Frontend listener: Accepts client connections.
+				- Routing engine: Selects a healthy backend using the configured algorithm.
+				- Connection manager: Tracks and forwards connections.
+				- TLS handler: Terminates HTTPS when configured.
+
+		Control plane
+			Manages configuration and backend health.
+				- Configuration manager: Registers backends and updates routing rules.
+				- Health checker: Probes servers and updates health status.
+				- Configuration store: Persists backend settings and policies.
+				- Monitoring: Records latency, traffic, errors, and health metrics.
+
+
+	Important design principle: Keep the data plane fast. Load routing configuration into memory so that each request does not need a database lookup.
+	
+7. Health checks
+	Health checks prevent traffic from being sent to broken servers.
+	
+	Check type		What it verifies
+	TCP check		Whether a connection can be established
+	HTTP check		Whether an endpoint such as /health returns a healthy response
+	Custom check		Application-specific conditions, such as dependency availability
+	
+	Typical flow:
+		1. Probe each backend periodically.
+		2. Mark a backend unhealthy after consecutive failures.
+		3. Remove it from the pool for new traffic.
+		4. Continue checking it.
+		5. Restore it after consecutive successful checks.
+	
+	Health-check intervals and failure thresholds balance fast detection against false alarms. A TCP port being open does not necessarily mean the application is healthy.
+	
+8. High availability for the load balancer itself
+	A load balancer that becomes a single point of failure has essentially moved the original problem one level up. Very efficient, in the worst possible way.
+	
+	Active-Passive
+		One instance handles traffic while a standby waits to take over if the primary fails.
+		- Simpler design.
+		- Uses standby capacity less efficiently.
+		- Requires reliable failure detection and failover.
+
+	Active-Active
+		Multiple instances handle traffic simultaneously.
+		- Better resource utilization and horizontal scalability.
+		- Can continue operating if one instance fails, provided enough capacity remains.
+		- Requires careful handling of shared state and traffic distribution.
+
+	Both patterns need a way to direct clients to a healthy instance, such as a virtual IP, DNS-based routing, or a cloud-managed front end.
+	
+9. Sticky sessions and SSL/TLS
+	Sticky sessions: Route a client's requests to the same backend, often using a cookie containing the backend identifier.
+	
+		- Useful when application session state is stored locally.
+		- Can create uneven load distribution.
+		- Requires a plan for backend failure and session reassignment.
+		- Prefer shared session storage when possible, so any backend can handle a request.
+		
+	SSL/TLS termination: The load balancer decrypts HTTPS traffic, handles certificates, and forwards requests to backend servers.
+
+	Benefits include simpler certificate management and reduced TLS processing on application servers. If traffic from the load balancer to the backend is sensitive, use TLS there too rather than assuming a private network is magically secure.
+	
+10. APIs and operational considerations
+	Typical management APIs might include:
+	Method		Endpoint		Purpose
+	POST		/backends		Register a backend server
+	DELETE		/backends/{id}		Remove a backend
+	GET		/backends		List backends and their status
+	PUT		/config			Update routing configuration
+	GET		/health			Check load balancer health
+	
+	These are illustrative API designs, not a requirement to expose every endpoint publicly.
+	
+Additional concerns:
+- Graceful draining: Stop assigning new requests to a server before maintenance while allowing existing requests to finish.
+- Connection timeouts: Prevent connections from hanging indefinitely.
+- Overload protection: Use rate limits, connection limits, and backpressure where appropriate.
+- Observability: Monitor request rate, p95/p99 latency, error rate, active connections, and unhealthy backend count.
+- Security: Restrict management APIs and protect TLS certificates.
+
+
+
+Design a load balancer with a fast data plane, a separate control plane, adaptive traffic distribution, health checks, and redundant load balancer instances.
