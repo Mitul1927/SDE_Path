@@ -1,0 +1,295 @@
+Design Parking Garage
+
+1. Requirements
+	Functional requirements
+		1. Support multiple floors and parking spot types.
+		2. Support motorcycles, cars, and buses.
+		3. Assign a compatible available spot when a vehicle enters.
+		4. Generate a parking ticket with entry time and spot details.
+		5. Calculate parking fees and process payment on exit.
+		6. Update available parking counts and display them.
+		7. Prevent the same spot from being allocated to multiple vehicles.
+		
+	Non-functional requirements
+		- Concurrency safety: Two vehicles must never reserve the same spot.
+		- Availability: Entry and exit should work reliably.
+		- Extensibility: New vehicle types, spot types, and pricing policies should be easy to add.
+		- Performance: Finding a spot should be efficient, even in a large garage.
+		
+	Scope assumptions
+		- One garage contains multiple floors.
+		- Each vehicle occupies one or more compatible spots.
+		- A ticket identifies one parking session.
+		- Payment must succeed before the vehicle is allowed to exit.
+		- Reservations and monthly memberships are out of scope initially.
+		
+2. High-level architecture
+
+						Entry/Exit Gates (Ticket scanners and gate controllers
+									||
+									||
+	Parking Garage Service				Spot Allocation			(Ticket Service)		Pricing Service		Payment Service
+	(Coordinates parking and exit workflows)	(Find and reserve spots)	(Track parking sessions)	(Calculate fees) 	(process payments)
+									||
+									||
+							Database (Floors , sports, vehicles, tickets, payments)
+									||
+									||
+							Availability Display (Available spots by floor and type)
+							
+3. Object-oriented class design
+
+			    +--------------------------------+
+		            |         ParkingGarage          |
+		            +--------------------------------+
+		            | - id                           |
+		            | - floors                       |
+		            +--------------------------------+
+		            | + parkVehicle(vehicle)         |
+		            | + unparkVehicle(ticketId)      |
+		            +--------------------------------+
+		               |              |           |
+		               |              |           |
+		      uses     |              |           | contains
+		               v              v           v
+		+----------------------+  +----------------------+   1
+		| <<interface>>        |  |    PaymentService    |   |
+		| SpotAllocation       |  +----------------------+   |
+		| Strategy             |  | + processPayment(    |   |
+		+----------------------+  |   ticket, amount)    |   |
+		| + findSpot(vehicle)  |  +----------------------+   |
+		+----------------------+                             |
+		                                                     |
+		                                                     v
+		                                      +--------------------------+
+		                                      |      ParkingFloor        |
+		                                      +--------------------------+
+		                                      | - floorNumber            |
+		                                      | - spots                  |
+		                                      +--------------------------+
+		                                      | + getAvailableSpots(type)|
+		                                      +--------------------------+
+		                                                     |
+		                                                     | 1
+		                                                     |◆
+		                                                     | *
+		                                                     v
+		                                      +--------------------------+
+		                                      |       ParkingSpot        |
+		                                      +--------------------------+
+		                                      | - spotId                 |
+		                                      | - spotType               |
+		                                      | - status                 |
+		                                      +--------------------------+
+		                                      | + reserve()              |
+		                                      | + release()              |
+		                                      +--------------------------+
+
+
+	+--------------------------+         1       0..* +--------------------------+
+	|         Vehicle          |--------------------->|      ParkingTicket       |
+	+--------------------------+                      +--------------------------+
+	| - licensePlate           |                      | - ticketId               |
+	| - vehicleType            |                      | - entryTime              |
+	+--------------------------+                      | - exitTime               |
+		                                          | - status                 |
+		                                          +--------------------------+
+		                                                     |
+		                      +------------------------------+----------------+
+		                      |                                               |
+		                      | refers to                                    | uses
+		                      v                                               v
+		          +--------------------------+                 +--------------------------+
+		          |       ParkingSpot        |                 | <<interface>>            |
+		          +--------------------------+                 |      PricingStrategy     |
+		                                                       +--------------------------+
+		                                                       | + calculateFee(ticket)   |
+		                                                       +--------------------------+
+
+
+	RELATIONSHIP SUMMARY
+	====================
+
+	ParkingGarage
+	  |---- uses -------------> SpotAllocationStrategy
+	  |---- uses -------------> PaymentService
+	  |---- 1 ◆---- * --------> ParkingFloor
+
+	ParkingFloor
+	  |---- 1 ◆---- * --------> ParkingSpot
+
+	Vehicle
+	  |---- 1 ------> 0..* ----> ParkingTicket
+
+	ParkingTicket
+	  |---- refers to --------> ParkingSpot
+	  |---- uses -------------> PricingStrategy
+	  
+  
+		
+	Class				Responsibility
+	
+	ParkingGarage			Coordinates the parking and exit workflows
+	ParkingFloor			Organizes spots on one floor
+	ParkingSpot			Tracks spot type and occupancy status
+	Vehicle				Stores vehicle information
+	ParkingTicket			Represents a parking session
+	SpotAllocationStrategy		Chooses a suitable spot
+	PricingStrategy			Calculates parking charges
+	PaymentService			Handles payment and payment status
+	ParkingDisplay			Shows availability by floor and vehicle type
+	Gate				Coordinates entry or exit access
+	
+	Use Motorcycle, Car, and Bus as vehicle types. Use spot types such as MOTORCYCLE, COMPACT, and LARGE. Keep vehicle-to-spot compatibility in one explicit rule or policy rather than scattering if-else statements across the application.
+	
+	For example:
+		- Motorcycle → motorcycle, compact, or large spot, depending on garage policy.
+		- Car → compact or large spot.
+		- Bus → a designated set of adjacent large spots, if the garage supports buses.
+		
+4. Core API design
+	Method	Endpoint				Purpose
+	
+	POST	/parking/entries			Park a vehicle and create a ticket
+	GET	/parking/tickets/{id}			Retrieve ticket details
+	POST	/parking/exits/quote			Calculate the fee due
+	POST	/parking/exits/{ticketId}/payment	Pay for a parking session
+	POST	/parking/exits/{ticketId}/complete	Complete exit and release the spot
+	GET	/parking/availability			Get available spots by floor and type
+	
+	The ticket ID should be generated uniquely. In a real implementation, timestamps should be stored consistently, usually in UTC, and displayed in the garage's local time zone.
+	
+5. Database design
+	A relational database such as PostgreSQL is a good initial choice because parking, ticket creation, spot reservation, and payment status involve related records and transactional updates.
+	
+	parking_floor
+		Column		Purpose
+		
+		id		Primary key
+		floor_number	Floor identifier
+		garage_id	Parent garage
+
+	parking_spot
+		Column		Purpose
+		
+		id		Primary key
+		floor_id	Floor containing the spot
+		spot_type	Motorcycle, compact, large
+		status		Available, occupied, reserved, out of service
+		spot_number	Human-readable spot identifier
+
+	vehicle
+		Column		Purpose
+		
+		id		Primary key
+		license_plate	Vehicle registration
+		vehicle_type	Motorcycle, car, bus
+
+	parking_ticket
+		Column		Purpose
+		
+		id		Ticket ID
+		vehicle_id	Vehicle using the garage
+		entry_time	Entry timestamp
+		exit_time	Exit timestamp
+		status		Active, payment pending, completed
+		total_fee	Final fee, when calculated
+		
+	ticket_spot
+		Maps tickets to spots. This supports a bus or another vehicle occupying multiple spots.
+			- ticket_id
+			- spot_id
+	payment
+		- id
+		- ticket_id
+		- amount
+		- status
+		- provider_reference
+		- created_at
+	Important constraints:
+		- A spot can belong to only one active parking session at a time.
+		- A ticket should not be completed twice.
+		- Payment requests should be idempotent.
+		- Database transactions must preserve consistency between ticket and spot state.
+	
+	For example, PostgreSQL can enforce exclusive active occupancy using a partial unique index on ticket_spot.spot_id for active sessions, or the system can maintain an active-occupancy table with a unique spot_id. The implementation must enforce this invariant at the database level, not merely hope the application behaves.
+	
+6. Spot allocation algorithm
+	Suppose the garage has 10,000 spots. Checking every spot for every vehicle is possible, but it's an unnecessarily expensive hobby.
+
+	Maintain available spots grouped by floor and type, using indexed queries or in-memory sets backed by the database.
+
+	Allocation strategy:
+		1. Determine which spot types are compatible with the vehicle.
+		2. Search floors according to a configured preference, such as nearest available floor.
+		3. Select an available spot.
+		4. Atomically reserve the spot.
+		5. Create the ticket and commit the transaction.
+		6. If no compatible spot exists, return GARAGE_FULL_FOR_VEHICLE_TYPE.
+
+7. End-to-end workflow
+	A. Vehicle entry
+		Vehicle arrives
+		Validate vehicle and garage capacity
+		Find compatible spot
+		Atomically reserve spot + create ticket
+		Return ticket and open gate
+
+	The spot reservation and ticket creation should occur in one database transaction. If either fails, roll back both.
+	
+	B. Vehicle exit
+		Scan ticket
+		Validate active parking session
+		Calculate final fee
+		Process payment
+		Mark ticket completed and release spots
+
+	Do not hold a database transaction open while waiting for an external payment provider. Instead, persist a payment attempt, call the provider, and then finalize the parking session in a short transaction after confirming payment success.
+
+	If the payment succeeds but the application times out, use the provider's idempotency key and payment-status lookup to reconcile the result rather than charging the driver again.
+	
+8. Pricing strategy
+	Pricing should be configurable rather than hardcoded into ParkingTicket.
+		public interface PricingStrategy {
+		    double calculateFee(
+			Instant entryTime,
+			Instant exitTime,
+			VehicleType vehicleType
+		    );
+		}
+
+
+	Possible implementations:
+		- HourlyPricingStrategy
+		- FlatRatePricingStrategy
+		- DailyPricingStrategy
+		- WeekendPricingStrategy
+	Example: if parking costs ₹40 per hour and partial hours are rounded up, a duration of 2 hours and 10 minutes costs ₹120.
+
+	Use integer currency units such as paise, or a decimal monetary type, rather than floating-point arithmetic for actual payments.
+	
+9. Handling failures and edge cases
+	Scenario					Expected behavior
+	
+	Garage is full					Reject entry without creating an active ticket
+	Two vehicles request one spot			Atomic reservation lets only one succeed
+	Ticket is invalid				Reject exit and record the failed attempt
+	Payment fails					Keep the parking session active
+	Payment result is unknown			Reconcile payment before retrying or releasing the spot
+	Application crashes during entry		Transaction rollback prevents partial allocation
+	Spot is unavailable for maintenance		Mark it out of service and exclude it from allocation
+	Vehicle occupies multiple spots			Reserve all required spots atomically
+	Duplicate exit request				Return the existing completed result without releasing twice
+	
+10. How to scale the design
+	Start with one application and PostgreSQL. Scale only when the workload justifies the added complexity.
+		- More traffic: Run multiple application instances behind a load balancer.
+		- Faster availability lookups: Cache counts by floor and spot type; update them when reservations change.
+		- Large multi-location system: Partition data by garage ID and use local transactions for each garage.
+		- Display updates: Publish spot-availability events asynchronously.
+		- Monitoring: Track available capacity, reservation conflicts, payment failures, and entry/exit latency.
+		
+	The database remains the source of truth. Cached availability counts are advisory because they can be slightly stale.
+	
+
+The hard part isn't drawing ParkingGarage containing ParkingFloor containing ParkingSpot. It's preserving correct spot allocation when requests happen concurrently and ensuring payment, ticket status, and spot availability remain consistent when failures occur. That's where the design earns its keep.
