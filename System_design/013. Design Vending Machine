@@ -1,0 +1,68 @@
+Design Vending machine
+
+1. Requirements
+	scope the MVP to three core features:
+		1. Select an item.
+		2. Accept cash payment and calculate change.
+		3. Dispense the selected item.
+		
+	Additional feature: Notify the servicing agent when inventory or change is running low.
+
+	Assumptions: one user operates the machine at a time, cash payments only for the MVP, and counterfeit currency detection is out of scope.
+	
+2. High level architecture
+
+	User Interface (Keypad / item selection) -> Item Selection System (Maps item code to product, price and stock) -> Cash Payment System (Accepts money, validates amount, calculates and dispenses change) -> Dispensing System (Controls the physical mechanism that releases the item) -> Notification System (Monitors low inventory and low change)
+	
+	The user interacts through the machine's interface. The internal components coordinate selection, payment, and dispensing.
+	
+3. Main components and responsibilities
+	Component			Responsibility
+	
+	Item Selection			Maps a row/column or product code to an item, price, and stock quantity
+	Payment System			Tracks inserted money and checks whether the price is covered
+	Change Dispenser		Determines which coins or notes can make the required change
+	Item Dispenser			Activates the mechanical mechanism to release the product
+	Notification System		Alerts servicing staff about low stock or insufficient change
+	
+4. Core transaction flow
+	User selects an item -> Check item validity and stock -> Display price and accept cash -> Validate payment and change availability -> Dispense change and item, then update inventory
+
+	The successful path should release the item only after payment is validated and the required change can be returned.
+	
+5. Handling edge cases
+	Scenario					Expected behavior
+	
+	Item is out of stock				Display an unavailable-item message; don't accept payment
+	User underpays					Wait for more money until timeout; otherwise cancel and return the inserted money
+	User overpays					Calculate and return the difference using available denominations
+	Machine cannot provide change			Cancel the transaction and refund the money, or request a different denomination if supported
+	User cancels selection				Return inserted money and reset the machine
+	Inventory is low				Notify the servicing agent
+	Change reserves are low				Notify the servicing agent
+	Payment succeeds but item gets stuck		Detect the dispensing failure and initiate recovery or refund
+	
+	Important design consideration: Check change availability before committing to the sale whenever possible. Otherwise, the machine could accept payment and then discover it cannot complete the transaction.
+	
+6. State machine
+	Ready -> Item Selected -> Awaiting payment -> Payment validated -> Dispensing item -> Ready for next user
+	Failure, cancellation, timeout, or unavailable change should lead to an appropriate refund/recovery path and then a safe reset.
+	
+	This prevents invalid operations, such as dispensing an item before payment or accepting a new purchase while the previous transaction is incomplete.
+	
+7. Extending the design to credit cards
+	The interview scopes card payments out of the MVP, but explains the extension:
+		1. Add a card reader to the user interface.
+		2. Send payment requests to an external payment gateway.
+		3. Receive the authorization or failure response.
+		4. Dispense the item only after successful authorization.
+		5. Handle timeouts and uncertain payment outcomes safely.
+	The machine would need network connectivity and secure payment integration. Card data should be handled through a compliant payment terminal or provider rather than stored directly by the vending machine.
+
+8. Interview takeaways
+	- Clarify scope first: Solve two or three requirements thoroughly instead of attempting every possible feature.
+	- Model the user journey: Selection → payment → change → dispensing.
+	- Use a state machine: It makes valid transitions and failure recovery explicit.
+	- Separate responsibilities: Selection, payment, dispensing, and notifications should be independently understandable.
+	- Handle edge cases: Stock shortages, underpayment, unavailable change, cancellation, and timeouts are central to the design.
+	- Think about physical failures: Software success doesn't guarantee that a motor actually dispensed the item.
