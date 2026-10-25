@@ -1,0 +1,115 @@
+Design a Distributed Key-Value Store
+
+The goal is to design a distributed database that stores data as key-value pairs and supports fast reads and writes across multiple machines.
+e.g - 
+	"user:101"  → {"name": "John", "city": "Delhi"}
+	"product:5" → {"name": "Laptop", "price": 60000}
+	
+Unlike a simple in-memory map, a distributed key-value store must handle large datasets, server failures, data replication, and concurrent updates.
+
+1. Requirements
+	Functional requirements
+		- put(key, value): Store or update a value.
+		- get(key): Retrieve a value by key.
+		- delete(key): Remove a key-value pair.
+		
+	Non-functional requirements
+		- Scale horizontally by adding servers.
+		- Provide low-latency reads and writes.
+		- Replicate data to survive node failures.
+		- Define consistency behavior when replicas disagree.
+		- Avoid losing acknowledged writes under the chosen durability guarantees.
+		
+2. High-level architecture
+	Client -> Coordinator/Request Router (Finds the nodes responsible for a key) -> Node A (partition + replica) , Node B (partition + replica), Node C (Partition + replica)
+	Data is partitioned across nodes and replicated according to the configured policy.
+	
+3. Data partitioning (Sharding)
+	The entire dataset cannot necessarily fit on one server, so divide it among multiple nodes.
+
+	A common approach is consistent hashing:
+		1. Hash each key to determine its position in a hash space.
+		2. Assign nodes positions in the same hash space.
+		3. Store each key on the node responsible for its hash position.
+		4. When a node is added or removed, move only a portion of the keys instead of redistributing everything.
+	
+	Example:
+		Key		Responsible node
+		
+		user:101	Node A
+		user:205	Node B
+		product:5	Node C
+
+	Virtual nodes let each physical server own multiple positions in the hash space, helping distribute data more evenly.
+	
+4. Replication and fault tolerance
+	Partitioning distributes data; replication creates copies of data on multiple nodes.
+
+	For example, with replication factor \(N=3\), each key is stored on three replicas.
+
+	Benefits:
+		- Data remains accessible if one node fails.
+		- Reads can be served by multiple replicas.
+		- Replicas can be used to recover lost data.
+		
+	The system must decide how many replicas need to acknowledge a write before it is considered successful.
+	
+5. Consistency and quorum
+	A distributed store needs a policy for deciding when reads and writes are successful.
+		- (N): Number of replicas for a key.
+		- (W): Number of replicas that must acknowledge a write.
+		- (R): Number of replicas consulted for a read.
+		
+	A common quorum design aims for:
+				R + W > N
+
+	For example, with (N=3, W=2, R=2), the read and write quorums overlap, helping reads observe the latest successful write under the appropriate protocol assumptions.
+	
+	Configuration			Trade-off
+	Small (R), small (W)		Lower latency, but weaker guarantees
+	Large (R), small (W)		Reads consult more replicas; writes are easier to acknowledge
+	Small (R), large (W)		Writes require more acknowledgments; reads are cheaper
+	Large (R), large (W)		Stronger coordination, potentially higher latency
+
+	Important: Quorum overlap alone does not guarantee strict consistency in every distributed database. Versioning, conflict resolution, concurrent writes, and the read/write protocol also matter.
+	
+6. Handling node failures
+	The system needs to keep operating when machines fail.
+		1. Detect unavailable nodes using health checks or heartbeat mechanisms.
+		2. Route requests to available replicas.
+		3. Replicate writes according to the configured durability policy.
+		4. Restore missing replicas when the failed node recovers or is replaced.
+		5. Rebalance partitions if the cluster membership changes.
+		
+	A hinted handoff mechanism can temporarily store writes intended for an unavailable replica and deliver them after it recovers. This is one possible strategy, not a universal requirement.
+	
+7. Write and read flows
+	Write flow: put(key, value)
+		1. Client sends a write request.
+		2. Coordinator determines the responsible replica nodes.
+		3. Write is sent to the replicas.
+		4. The coordinator waits for the configured number of acknowledgments.
+		5. Client receives success or failure according to the write policy.
+
+
+	Read flow: get(key)
+		1. Client requests a key.
+		2. Coordinator locates its replicas.
+		3. One or more replicas return their stored values and versions.
+		4. The system selects or reconciles the appropriate value.
+		5. Client receives the result.
+		
+8. CAP theorem and trade-offs
+	During a network partition, a distributed system must make a trade-off between:
+		- Consistency (C): Reads return the latest value according to the system's consistency guarantee.
+		- Availability (A): Every request to a non-failed node receives a response.
+		- Partition tolerance (P): The system continues operating despite network communication failures between nodes.
+		
+	When a partition occurs, a CP-oriented design may reject or delay some requests to preserve consistency, while an AP-oriented design may continue responding with potentially stale or conflicting data.
+
+	The choice depends on the use case. A shopping cart may tolerate temporary inconsistency; a banking balance often requires much stricter correctness.
+	
+	
+	
+	
+A distributed key-value store combines key-based partitioning, replication, consistency policies, and failure recovery to provide scalable and reliable get, put, and delete operations.
