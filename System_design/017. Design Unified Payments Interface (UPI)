@@ -1,0 +1,286 @@
+Design Unified Payments Interface (UPI)
+
+1. what we're actually building
+
+	We'll design a UPI-like platform with:
+		- Person-to-person (P2P) payments.
+		- Merchant payments through QR codes or UPI IDs.
+		- UPI AutoPay for subscriptions and recurring debits.
+		- Secure onboarding and identity verification.
+		- High availability, horizontal scaling, and reliable transaction recovery.
+		
+	One important distinction: a UPI app is not the entire UPI system. A third-party app such as PhonePe or Google Pay operates within an ecosystem involving PSP banks, NPCI's switching infrastructure, and the payer's and receiver's banks
+	
+2. High-level architecture
+
+	Clients (Payer app) 	-><- 	Edge/API Layer (TLS, API gateway, rate limiting, device/session checks 		->	 Payment Platform Services = Identity & Device (Binding, registration), UPI Address Mapper (VPA resolution), Payment Orchestrator (Routing, state machine), Risk Engine (Fraud, limits, velocity), Mandate Service (AutoPay lifecycle), Transaction Store (Durable status, audit), 		-><- 	NPCI UPI Switch/Network (Inter-institution routing and payment coordination)		-><-	Payer's Bank (Authenticate and debit), Receiver's Bank (Validate and credit).
+	
+	What does each service do?
+		Component				Responsibility
+		
+		API gateway				Protects entry points, enforces quotas, routes requests
+		Identity/device service			Registers users and binds a supported device to the UPI profile
+		Address mapper				Resolves a UPI ID to the appropriate routing destination
+		Payment orchestrator			Coordinates requests, responses, and transaction state
+		Risk engine				Detects suspicious transactions and enforces applicable limits
+		Mandate service				Creates, updates, pauses, revokes, and tracks AutoPay mandates
+		Transaction store			Persists transaction identifiers, status, and audit records
+		Notification service			Sends receipts and status updates asynchronously
+		Reconciliation service			Identifies mismatches between participants' records
+		
+	The most important design boundary: the payment app must not be the authority for a bank account's balance or for whether money was actually debited. Those decisions belong to the relevant bank's systems.
+	
+3. How do we authenticate the payer and verify the receiver?
+	These are different problems. Authentication proves control of an account or credential. Recipient verification helps establish where the money will go.
+	
+	A. Payer onboarding
+		A typical onboarding flow is:
+		1. The user installs the UPI app and registers their mobile number.
+		2. The PSP/app follows the applicable mobile verification and device-binding process.
+		3. The user selects a bank and links an eligible account. The bank-side systems validate the account association.
+		4. The user sets up a UPI PIN through the supported bank-authorized process.
+		5. The system associates the registered UPI profile, device, and eligible bank account.
+		A mobile number alone is not proof that a person owns a bank account. Account linking and bank-side checks are essential. 
+
+
+
+	B. Authentication when sending money
+		For a normal payment:
+			1. The user enters an amount and chooses a receiver.
+			2. The app requests transaction authorization using the supported UPI authentication flow.
+			3. The payer's bank validates the payment credentials and applicable security checks.
+			4. The bank authorizes or rejects the debit.
+			
+		The app must not store a reusable plaintext UPI PIN. It must use the approved, secure payment authentication mechanisms.
+
+		UPI PIN authentication is the familiar model, but supported authentication methods can evolve under applicable rules. NPCI's October 2025 circular introduced optional on-device biometric authentication for eligible transactions, subject to its stated conditions. 
+
+
+	C. How do we verify the receiver?
+		Suppose a user scans a QR code that claims to belong to shop@bank.
+
+		The flow should be:
+			1. Extract the UPI ID or merchant identifier from the QR code.
+			2. Resolve it through the trusted UPI addressing infrastructure.
+			3. Retrieve the payee identity details returned by the supported network flow.
+			4. Display the verified recipient name and relevant details to the payer.
+			5. Let the payer confirm before submitting the payment.
+			
+		For merchants, additional protections include merchant onboarding, bank/acquirer due diligence, and verified merchant identifiers. 
+
+	Important: the receiver generally does not enter a UPI PIN just to receive a payment. The payer authorizes the debit; the receiver's bank validates the destination and credits the beneficiary account.
+
+	Also, a successful name lookup is not a guarantee that a seller is honest. It verifies identity information within the payment system, not the seller's business practices.
+	
+	
+4. Normal UPI payment: exact request flow
+	Example: Alice pays ₹500 to Bob.
+	
+	Alice's app → Payment platform
+		Alice selects Bob's UPI ID and enters ₹500. The system creates a unique transaction reference and validates the request.
+	Resolve Bob's identity
+		The address-resolution flow identifies Bob's payment destination. Alice sees the recipient details and confirms them.
+	Authenticate Alice
+		Alice authorizes the payment using the supported UPI authentication mechanism.
+	Payment request → NPCI switch
+		The payer-side PSP sends the payment request through the UPI network. Routing directs it to the relevant banks.
+	Payer's bank → debit
+		Alice's bank checks the account, authentication result, balance, applicable limits, and risk controls. It processes the debit if approved.
+	Receiver's bank → credit
+		The payment network coordinates the credit request to Bob's bank. That bank validates the request and processes the credit.
+	Return status and notify
+		The participants return transaction results. The apps show the resulting status, and notifications are sent asynchronously.
+		
+	This reflects the general UPI payment path described in government payment-system material. The exact message formats, protocol details, and internal implementation depend on the participating institutions and NPCI's specifications.
+	
+	
+	What should the transaction database store?
+		A simplified record might look like this:
+			Field				Example
+			transaction_id			TXN-82A91
+			payer_account_ref		Tokenized/internal reference
+			payee_address			bob@bank
+			amount				₹500
+			status				PENDING
+			created_at			Request timestamp
+			idempotency_key			Unique request key
+			network_reference		Reference returned by the payment network
+			
+	
+	A pending or timed-out request must be resolved using authoritative transaction status, not guessed from a missing response.
+	A timeout is not the same as a failure. If the payer's bank debits the money but the response is lost, blindly retrying a new payment could cause a duplicate debit.
+	
+	The correct approach is to query or reconcile the original transaction using its unique reference, then safely resolve its state.
+	
+5. UPI AutoPay: the architecture and flow
+	AutoPay introduces a second major workflow: mandate registration first, repeated payment execution later.
+
+	A mandate is a standing authorization that defines what the merchant is allowed to debit and under what conditions. It is not unrestricted access to the user's bank account.
+	
+	A. Components to add
+		Mandate service
+			Stores mandate status, amount rules, recurrence, validity, and revocation information.
+		Scheduler / due-work service
+			Finds upcoming payment executions and creates durable work items.
+		Mandate validator
+			Checks active status, permitted amount, schedule, validity, revocation, and applicable authentication rules.
+		Execution ledger and reconciliation
+			Tracks each occurrence separately and recovers uncertain or failed executions safely.
+	
+	B. Phase 1: register the mandate
+		Example: Alice subscribes to a service for ₹499 per month.
+		1. Merchant checkout
+			₹499 monthly, mandate validity, start date
+		2. Merchant / payment gateway
+			Creates the mandate request with a unique reference
+		3. Sponsor bank → NPCI → payer's PSP app
+		4. Alice reviews and authorizes
+			Confirms merchant, amount rules, frequency, and validity
+		5. Mandate registered
+			Successful response and unique mandate reference returned to merchant
+			
+	
+		The mandate should persist fields such as:
+			- mandate_id and network mandate reference.
+			- Payer account reference and merchant identity.
+			- Fixed amount or maximum permitted amount.
+			- Frequency, start date, and expiry.
+			- Current state: pending, active, paused, revoked, or expired.
+			- Applicable authentication and execution conditions.
+			
+		The mandate registration process and the unique mandate reference are described in payment-provider AutoPay integration documentation.
+		
+	C. Phase 2: execute a scheduled payment
+		At the next monthly due date:
+			1. Scheduler finds due mandates. It creates one execution record for that specific occurrence.
+			2. Validator checks the mandate. It must still be active, within its validity period, and permitted for the requested amount.
+			3. Risk and rule checks run. The system checks applicable limits, fraud signals, and whether additional customer authorization is required.
+			4. The merchant or its payment provider initiates the execution. The request includes the mandate reference and execution details.
+			5. The payment network and banks process the debit and credit. The issuer bank applies the relevant mandate and authorization rules.
+			6. The execution is recorded. The merchant receives the result, and the customer is notified as required.
+			
+		The key difference from a normal payment is that the customer has already authorized a specific set of recurring conditions. That does not mean every future debit can bypass all authentication requirements. The applicable rules determine when further approval is required.
+	
+	D. What happens if Alice revokes the mandate?
+		The system must propagate the revocation through the supported mandate lifecycle. Future executions must be blocked once the revocation is effective.
+
+		There can be a race between revocation and an execution already in progress. To handle this, the platform needs clear state-transition rules, durable execution records, and network-authoritative status checks. Simply deleting the mandate row from a local database is not sufficient.
+	
+
+6. How do we scale this system?
+
+	A. Horizontally scale stateless services
+		Run multiple instances behind load balancers.
+		Load Balancers -> API 1, API 2, API N _> Shared durable state and downstream services
+		
+		The payment API, recipient lookup, and many validation services can be scaled horizontally. Instances should not depend on in-memory state for transaction correctness.
+
+		Use autoscaling based on request rate, latency, CPU, queue lag, and downstream capacity. But adding API servers will not fix a bank that can process only a limited number of requests.
+		
+	B. Partition the workload
+		Partition data by a stable key, such as transaction ID or account reference, depending on the operation.
+			- Transaction records can be distributed across database partitions.
+			- Mandates can be partitioned by mandate ID or payer reference.
+			- Due executions can be divided into shards by schedule window or mandate key.
+			- Queues can use partition keys to distribute work.
+			
+		For account-specific operations, preserve the necessary ordering and concurrency controls. Two simultaneous debits must not both spend the same available funds merely because they reached different servers.
+		
+	C. Use caching selectively
+		Good candidates:
+			- Public configuration and bank-routing metadata.
+			- Non-sensitive reference data.
+			- Some recipient-resolution data, subject to freshness and security constraints.
+		Do not use a cache as the authoritative source for balances, final transaction status, mandate revocation, or authorization decisions.
+		
+	D. Keep synchronous and asynchronous work separate
+		The critical payment path must return a reliable transaction result. Work such as push notifications, analytics, reporting, and dashboard updates can usually be asynchronous.
+
+		Use a durable message broker for those tasks, with retries and dead-letter handling. For example, a transactional outbox can prevent a committed transaction record from being separated from its corresponding event.
+
+		Do not make payment success depend on whether a push notification was delivered.
+		
+	E. Estimate capacity instead of guessing
+		Suppose an interview asks you to design for 10 million payments per day.
+
+					Average TPS={10,000,000}/{86,400} approx 116
+
+		If peak load is 10 times average, that's approximately 1,160 transactions per second.
+
+		That is only a starting estimate. Real capacity planning must include retries, mandate executions, status checks, bursts, latency targets, and the capacity of every bank and network dependency.
+		
+
+7. Database design and consistency
+	A payment platform needs more than one generic database table.
+	
+	Data					Suggested storage approach						Reason
+	
+	Transaction state			Durable relational or strongly consistent transactional store		Correctness and auditability
+	Mandates				Durable store with transactional updates				Enforce lifecycle and execution rules
+	Idempotency records			Durable unique-key storage						Prevent duplicate processing
+	Events and jobs				Durable message broker / job store					Recoverable asynchronous work
+	Analytics				Separate analytical storage						Avoid burdening the payment path
+	Routing metadata			Cache plus authoritative source						Fast lookups with controlled freshness
+	
+	These are design choices for a conceptual implementation, not a claim about NPCI's exact internal storage technology.
+	
+	The hardest problem: duplicate execution
+		Suppose the scheduler creates a monthly ₹499 debit. A worker sends it to the payment network, but the response times out. The worker restarts.
+
+		If it creates a new execution with a new identity, Alice could be charged twice.
+
+		Instead, derive a stable occurrence key, conceptually:
+
+		mandate_id + scheduled_occurrence
+
+		Then:
+			1. Persist the execution record before sending the request.
+			2. Enforce uniqueness for that mandate occurrence.
+			3. Reuse the same execution identity during retries.
+			4. Check authoritative status before retrying an uncertain transaction.
+			5. Reconcile outcomes that cannot be resolved immediately.
+
+		This gives effectively-once business processing, provided the downstream systems support suitable idempotency or status-resolution mechanisms. You cannot guarantee end-to-end exactly-once execution merely by adding a database constraint.
+	
+	Prevent concurrent overspending
+		The payer's bank is responsible for authoritative account balance and debit processing. It must coordinate concurrent operations using appropriate transactional controls, account-level serialization, or equivalent mechanisms.
+
+		The app provider should never invent a local balance and use it to authorize a real debit.
+		
+		
+8. Failure handling and recovery
+	A production-grade design must explicitly handle these cases.
+	
+	Failure						Correct response
+	
+	Payer bank is unavailable			Return a pending/error outcome as appropriate; retry or resolve according to the network protocol
+	Debit succeeds, response is lost		Query the original transaction; do not create a fresh payment blindly
+	Debit succeeds but credit fails			Follow the prescribed retry, reversal, and reconciliation process
+	Scheduler runs twice				Unique execution key prevents duplicate logical executions
+	Mandate is revoked				Reject future executions once revocation is effective
+	Queue worker crashes				Recover durable work and retry safely
+	Notification fails				Retry notification separately; do not reverse a successful payment
+	Banks disagree on status			Reconcile using participant records and authoritative references
+	
+	For recurring payments, also define what happens after insufficient funds, an expired mandate, a failed execution, or a missed schedule. Retrying every failed debit indefinitely is not acceptable.
+	
+9. Security and fraud prevention
+	Identity verification alone does not prevent fraud. A legitimate user can still be tricked into approving a fraudulent payment.
+
+	Build security across several layers:
+		- Onboarding: Validate mobile/device registration and bank-account association through supported flows.
+		- Authentication: Protect payment credentials and apply the required authentication method.
+		- Recipient verification: Resolve the recipient through trusted payment-network data and show the verified name before confirmation.
+		- Merchant verification: Perform appropriate onboarding, due diligence, and account ownership checks.
+		- Authorization: Enforce transaction limits, mandate conditions, account permissions, and applicable rules.
+		- Fraud detection: Evaluate velocity, unusual behavior, suspicious devices, and risk signals.
+		- Transport and data protection: Secure communications, restrict sensitive-data access, and protect keys.
+		- Auditability: Preserve traceable transaction events and security logs.
+		- Operations: Monitor failure rates, unusual transaction patterns, queue backlogs, and reconciliation mismatches.
+	
+	No single control proves everything. Device binding does not prove every transaction is legitimate; a valid PIN does not prove the receiver is trustworthy; and a verified receiver name does not prove the underlying purchase is safe.
+	
+	
+
+
+UPI is a distributed coordination problem where independently operated institutions must agree on the outcome of a financial transaction. Scaling the API layer is comparatively straightforward. Preserving correctness when responses are lost, banks are unavailable, requests are duplicated, or recurring mandates change is the genuinely difficult part.
