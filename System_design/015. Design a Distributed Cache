@@ -1,0 +1,136 @@
+Design a Distributed Cache
+
+1. What is a distributed cache?
+	A distributed cache stores frequently accessed data in the RAM of multiple servers, allowing applications to retrieve data faster and reduce load on databases or external services.
+
+	Example: Instead of querying PostgreSQL for the same user profile on every request, the application retrieves it from Redis or Memcached when available.
+
+	Requirements
+		- put(key, value): Store a value.
+		- get(key): Retrieve a value.
+		- High performance and low latency.
+		- Horizontal scalability.
+		- High availability and acceptable data-loss behavior.
+		
+2. High-level architecture
+	Application Servers -> Cache Client (Selects the cache node for each key) -> Cache Node A, Cache Node B, Cache Node C (Data is partitioned across nodes; replicas can improve availability).
+	
+	starting with a single-machine cache and then introducing sharding, consistent hashing, replication, and configuration management
+	
+3. Start with a single-node cache
+	Use a hash map to store key-value pairs, giving average \(O(1)\) lookup and insertion.
+
+	The problem is limited memory. When the cache becomes full, some entries must be removed.
+
+	LRU (Least Recently Used) removes the item that has not been accessed for the longest time.
+
+	Implement LRU using:
+		- Hash map: maps keys to nodes.
+		- Doubly linked list: tracks usage order.
+		- Most recently used item: head.
+		- Least recently used item: tail.
+		
+	Both lookup and moving an entry to the head take average O(1) time.
+	
+4. Dedicated cache vs. co-located cache
+	Approach			How it works				Advantages								Disadvantages
+	
+	Dedicated cache cluster		Cache runs on separate servers.		Independent scaling, isolated resources, shared by multiple services.	Additional infrastructure and operational cost.
+	Co-located cache		Cache runs on application servers.	Lower infrastructure cost and simpler deployment.			Application and cache compete for CPU and memory; scaling is coupled.
+
+	For a shared cache used by multiple applications, a dedicated cluster is often preferable.
+	
+	
+5. Sharding: distributing data
+	As the dataset grows beyond one server's memory, divide it into smaller partitions called shards.
+	Simple modulo hashing
+			node = hash(key) mod N
+
+	Here, N is the number of cache nodes.
+
+	Problem: Adding or removing a node changes the mapping for many keys, causing a large number of cache misses.
+	
+	Consistent hashing
+		- Place cache nodes on a logical hash ring.
+		- Hash each key onto the same ring.
+		- Assign the key to the next node clockwise.
+		- When nodes change, only a portion of the keys need to move.
+		
+	Virtual nodes: Assign multiple positions on the ring to each physical server to improve load distribution.
+
+	Consistent hashing reduces remapping, although it does not guarantee perfectly balanced traffic or prevent hot spots
+	
+6. Cache client and service discovery
+	The cache client determines which server owns a key and routes the request there.
+
+	Two configuration approaches:
+		- Static configuration: A list of cache servers is deployed with the application. Simple, but changes require configuration updates.
+		- Dynamic configuration service: Clients discover registered cache nodes from a central configuration system. Heartbeats detect failures, and node lists can be updated automatically.
+	ZooKeeper and Redis Sentinel as relevant coordination or monitoring tools.
+
+	An alternative is to use a proxy that routes requests, or cache nodes that redirect requests to the correct shard. These approaches simplify the client but introduce additional routing considerations.
+	
+7. Replication and high availability
+	A single cache node can fail, so replicate each shard.
+
+	we are using a leader-follower (primary-replica) model:
+		- Writes go to the leader.
+		- Followers replicate the leader's data.
+		- Reads can be served by the leader or replicas.
+		- If the leader fails, a follower can be promoted.
+	A configuration service can monitor nodes and coordinate failover.
+
+	Important trade-off: Asynchronous replication is faster, but recent writes may be lost if the leader fails before replication completes. Reads from replicas may also return stale values.
+
+	For a cache, this can be acceptable if the underlying database remains the source of truth and the application can tolerate cache misses.
+	
+8. Expiration and eviction
+	These solve two different problems.
+		Mechanism			Purpose
+		LRU eviction			Frees memory when the cache reaches capacity.
+		TTL (Time to Live)		Makes an entry expire after a specified duration.
+
+	Expired entries can be removed using:
+		- Passive expiration: Check expiration when a key is accessed.
+		- Active expiration: Periodically inspect selected entries and remove expired ones.
+		
+	For large caches, checking every entry continuously is expensive, so active expiration often uses sampling or other efficient strategies.
+	
+9. Local cache and remote cache
+	Applications can use two cache layers:
+		1. Local cache: In-process memory, very fast but limited to one application instance.
+		2. Distributed cache: Shared across application instances, with network latency.
+	
+	Typical lookup flow: 
+		Application request -> Local cache lookup 		-> 		If remote cache misses, fetch from database
+						Hit -> Return value
+						Miss -> Query distributed cache
+
+
+	The trade-off is that local caches can become inconsistent with one another. TTLs and invalidation mechanisms help limit stale data.
+	
+10. Other important considerations
+	- Hot shards: Some nodes receive more traffic than others. Add replicas, rebalance keys, or cache exceptionally hot keys locally.
+	- Consistent hashing's weaknesses: Uneven ring placement can cause imbalanced partitions; a failed node can overload its successor. Virtual nodes help reduce these issues.
+	- Security: Keep cache nodes off the public internet, restrict access, and encrypt sensitive data when appropriate.
+	- Monitoring: Track cache hit/miss ratio, latency, request errors, CPU, memory, and network usage.
+	- Logging: Capture useful request and failure details without generating excessive logging overhead.
+	
+
+Problem						                        Solution
+
+Cache memory is full				              LRU eviction
+Dataset exceeds one server's memory	    	Sharding
+Nodes change frequently				            Consistent hashing
+Cache node fails				                  Replication and failover
+Cache entries become stale	      	    	TTL and invalidation
+Traffic is uneven			                  	Virtual nodes, rebalancing, and replicas
+Clients have outdated node lists	      	Dynamic service discovery
+Local cache is faster but inconsistent		TTL and invalidation across layers
+
+
+
+Build a distributed cache by combining an efficient local LRU cache, consistent-hashing-based sharding, replication, dynamic node discovery, TTL expiration, and monitoring.
+
+
+The key interview trade-off: The design prioritizes performance and availability over strict consistency. Because a cache is usually backed by a durable database, occasional stale values or lost cache entries can be acceptable, provided the application handles cache misses safely.
