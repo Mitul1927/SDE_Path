@@ -1,0 +1,131 @@
+Design an Authentication System
+
+1. Requirements
+	Functional requirements
+		- User registration.
+		- User login using username and password.
+		- Authenticate requests to identify the user.
+		- Authorize actions based on user permissions.
+		- Sign out and invalidate access when required.
+		
+	Non-functional requirements
+		- Strong security against impersonation.
+		- Scalability for large numbers of requests.
+		- Low authentication latency.
+		- Secure token storage and transmission.
+		
+	focus mainly on login, authenticated requests, and the trade-off between centralized sessions and decentralized token validation.
+	
+2. The core problem: HTTP is stateless
+	HTTP does not automatically remember who made a previous request.
+
+	For example, if a request says username=Bob, a malicious user can simply claim to be Bob. The server must verify identity instead of trusting the username supplied by the client.
+
+	The solution is to establish a session or issue a cryptographically verifiable token after successful login.
+	
+3. Approach 1: Centralized session-based authentication
+	Client sends username + password -> Authentication API validates credentials -> Create random session ID and store it -> Client receives session ID
+	For every subsequent request, the server validates the session ID against the session store.
+	
+	How it works
+		1. User logs in with valid credentials.
+		2. Server generates a cryptographically secure, unpredictable session ID.
+		3. Server stores the mapping between session ID and user identity in a session database or shared store.
+		4. Client sends the session ID with subsequent requests.
+		5. Server looks up the session, identifies the user, and checks their permissions.
+		
+	Advantages
+		- Central source of truth for active sessions.
+		- Straightforward logout and session revocation.
+		- User roles and permissions can be checked against current server-side data.
+		
+	Disadvantages
+		- Session storage must scale with active sessions.
+		- A session lookup on every request adds latency and storage load.
+		- Distributed applications need a shared session store or a suitable session-routing strategy.
+		
+
+4. Session storage: Cookies vs. Local Storage
+	Feature						Cookies									Local Storage
+	
+	Sent automatically with matching requests	Usually, based on cookie settings					No
+	Typical use					Browser session identifiers						Client-side token storage
+	CSRF exposure					Possible when credentials are automatically attached			Generally less exposed to classic cookie-based CSRF
+	XSS exposure					HttpOnly cookies prevent JavaScript from reading the cookie		JavaScript can read stored tokens
+
+	Important security distinction: Local Storage does not automatically solve security problems. If an attacker executes JavaScript through an XSS vulnerability, they may steal a token from Local Storage.
+
+	For browser applications, a common secure approach is an HttpOnly, Secure, appropriately SameSite-configured cookie combined with CSRF protections where needed.
+	
+5. Approach 2: Decentralized authentication using JWT
+	A JSON Web Token (JWT) lets a service validate a token without querying the session database on every request.
+	
+	Client logs in -> Authentication service validates credentials -> issued signed JWT to client -> Client sends JWT with API requests -> Each service verifies signature and claims locally.
+	
+	JWT structure
+		A JWT has three parts:
+
+		Header.Payload.Signature
+			- Header: Token type and signing algorithm.
+			- Payload: Claims such as user ID, roles, expiration (exp), and issuer (iss).
+			- Signature: Protects the integrity of the header and payload.
+		
+		JWT payloads are typically encoded, not encrypted. Do not put passwords, secrets, or sensitive personal data in them.
+
+		For signing:
+		- HS256: Uses a shared secret.
+		- RS256 / ES256: Uses a private key to sign and a corresponding public key to verify.
+		
+	The authentication service issues the signed token; other services verify it and check the relevant claims. A modified payload fails signature verification.
+	
+
+6. Centralized sessions vs. JWT
+	Feature			Server-side sessions					Self-contained JWT
+	
+	Validation		Session-store lookup					Local signature and claim verification
+	Database load		Higher if every request requires a lookup		Lower for token validation
+	Immediate revocation	Straightforward						Requires additional mechanisms
+	Scalability		Requires shared session storage or routing		Convenient across independent services
+	Token size		Usually small session ID				Often larger due to claims
+	Main trade-off		Centralized state					Harder revocation and stale claims
+
+	Key point: JWT is not inherently more secure than sessions. It changes where authentication state lives and how requests are validated.
+	
+7. The logout problem with JWT
+	Suppose a JWT expires in one hour. The user clicks logout after five minutes.
+
+	If a service validates only the signature and expiration, that JWT may remain valid for the remaining 55 minutes. Deleting it from the browser does not invalidate a stolen copy.
+
+	Possible solutions:
+		- Short-lived access tokens: Reduce the window of exposure.
+		- Refresh tokens: Issue new access tokens through a controlled process; protect and revoke refresh tokens.
+		- Token denylist: Check whether a token has been revoked, at the cost of additional shared state or lookups.
+		- Centralized session/version check: Allow services to reject tokens after a user logs out or credentials are compromised.
+		
+	This is the fundamental trade-off: stateless validation reduces central lookups, while immediate revocation generally requires some centralized state or additional coordination.
+	
+8. Security essentials
+	- Store passwords using a password-hashing algorithm such as Argon2id or bcrypt, with appropriate salts and parameters.
+	- Use HTTPS for login and every authenticated request.
+	- Generate session IDs using a cryptographically secure random generator.
+	- Validate JWT signature, expiration, issuer, audience, and permitted algorithm.
+	- Never trust roles or user IDs sent by the client without validating their authenticity and authorization context.
+	- Add rate limiting and abuse detection to login endpoints.
+	- Rotate or revoke credentials when compromise is suspected.
+	- Use least-privilege authorization for sensitive actions.
+	
+	
+Question								                              Answer
+
+How do you identify the user across requests?			  	Session ID or signed access token
+How do you prevent impersonation?				            	Validate the session or token; never trust a client-provided username
+Why use JWT?								                          Local verification across services without a session-store lookup on every request
+What is JWT's main drawback?						              Revocation and stale claims are harder to handle
+How do you scale centralized sessions?					      Use a shared session store, such as Redis, with appropriate availability
+How do you handle logout with JWT?			          		Short expiry, refresh-token revocation, or a denylist/session check
+Are JWT payloads encrypted?						                No, not by default; they are encoded and signed
+Does Local Storage prevent XSS?				            		No. Malicious JavaScript can read tokens stored there
+
+
+
+Authentication proves who the user is; authorization determines what they can do. Sessions provide centralized control, while JWT enables decentralized validation at the cost of more complicated revocation.
