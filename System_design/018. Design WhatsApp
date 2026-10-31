@@ -1,0 +1,124 @@
+Design WhatsApp
+
+
+1. Requirements
+	Functional requirements
+		- One-to-one and group messaging (up to 500 members).
+		- Message status: sent, delivered, read.
+		- Online/offline status and last seen.
+		- Message history and multi-device synchronization.
+		- Push notifications for offline users.
+		
+	Non-functional requirements
+		- Low latency: p99 under 100 ms for online message delivery.
+		- High availability: 99.99% uptime target.
+		- Reliable delivery, correct message ordering, and no duplicate messages.
+		- Scale to hundreds of millions of users.
+		
+2. Capacity estimation
+	Metric				Estimate
+	
+	Daily active users		500 million
+	Messages/user/day		40
+	Total messages/day		20 billion
+	Average throughput		~230,000 messages/sec
+	Peak throughput			~700,000 messages/sec
+	Concurrent connections		~50 million average
+	Text storage			~2 TB/day
+
+	These are interview assumptions, not verified WhatsApp production statistics. The point is to establish scale before choosing the architecture.
+	
+3. High-level architecture
+	Mobile/Web Clients (Persistent WebSocket connections) -> Load Balancer (Distributes connections across chat servers) -> Chat Servers (Maintain connections and route messages) 
+	-><- Message Service (Persist messages), Session Service (Redis: user -> server), Kafka (Queues, retries, fanout), Databases (Cassandra + PostgreSQL).
+	
+	Conceptual architecture based on the blog, not an exact production deployment.
+	
+	Components to remember
+		Component				Responsibility
+		
+		Chat servers				Manage persistent connections and deliver messages
+		Redis					Track online users and which server they are connected to
+		Message service				Persist messages, assign IDs and manage status
+		Kafka					Queue delivery work, retry failures and distribute group messages
+		Cassandra / ScyllaDB			Store high-volume message history
+		PostgreSQL				Store user, group and membership data
+		APNs / FCM				Notify offline users
+		
+
+4. Message delivery flow
+	A. Both users are online
+		1. User A sends a message over WebSocket to Chat Server 1.
+		2. The message is persisted in the database first.
+		3. Redis identifies which chat server holds User B's connection.
+		4. Chat Server 1 forwards the message to Chat Server 2, directly or through a messaging backplane.
+		5. Chat Server 2 pushes the message to User B.
+		6. User B acknowledges receipt, updating the delivery status.
+		
+	B. Recipient is offline
+		1. Persist the message so it survives server or network failures.
+		2. Mark it as pending delivery and enqueue delivery work.
+		3. Send a push notification through APNs or FCM.
+		4. When User B reconnects, fetch messages after their last acknowledged message ID.
+		5. Deliver pending messages in order and update acknowledgements.
+		
+	Key principle: The database is the durable source of truth. Kafka helps with delivery and retries; it should not be the only place the message exists.
+	
+5. Group messaging and fanout
+	One message to a group of 500 members can require delivery to 500 recipients. This is called fanout.
+		- Small groups: Direct delivery from the sender's chat server is simpler and faster.
+		- Large groups: Use Kafka and multiple workers to distribute delivery work.
+		- Optimization: Batch recipients by chat server rather than making a separate network call for every member.
+		- Offline members: Store pending deliveries and deliver them on reconnection.
+		
+	hybrid approach: direct fanout for groups below roughly 100 members and queue-based fanout for larger groups. The threshold is tunable, not a universal law.
+	
+6. Database design
+	Data				Suggested storage			Reason
+	Messages			Cassandra / ScyllaDB			High write throughput and ordered message history
+	Conversation lists		Cassandra				Fast retrieval of recent conversations
+	Users and groups		PostgreSQL				Relational queries and transactions
+	Group membership		PostgreSQL				Unique membership and consistent updates
+	Sessions and presence		Redis					Fast lookups and expiring connection records
+	Delivery tasks			Kafka					Asynchronous processing and retries
+
+	Important database concepts
+		- Partition messages by conversation_id.
+		- Use a time-ordered message ID or clustering key to retrieve recent messages efficiently.
+		- Use cursor-based pagination, not large SQL-style offsets, for old message history.
+		- Store per-recipient delivery receipts for group messages.
+		- Denormalize conversation previews and unread counts to speed up reads.
+		
+7. Important design decisions
+	Problem						Solution
+	
+	Real-time delivery				WebSockets instead of constant polling
+	Message loss					Persist before attempting delivery
+	Duplicate sends after retries			Unique client message ID and idempotency
+	Correct message order				Server-assigned ordering metadata and ordered processing
+	Offline users					Durable message history and last-acknowledged ID
+	Millions of connections				Horizontally scaled chat servers
+	Group delivery bottleneck			Hybrid fanout with Kafka workers
+	Online/last-seen status				Redis with expiry and heartbeats
+	Multiple devices				Per-device acknowledgements and history synchronization
+	Message history at scale			Partitioned NoSQL storage and cursor pagination
+	
+8. APIs to remember
+	- WebSocket message or POST /messages: send a message.
+	- GET /conversations/{conversation_id}/messages: fetch message history.
+	- POST /messages/{message_id}/status: update delivery/read status.
+	- GET /users/{user_id}/presence: retrieve online status.
+	
+	The send request should include a unique client_message_id to prevent retries from creating duplicate messages.
+	
+	
+
+If you remember only five things, remember these:
+	1. WebSocket provides persistent, low-latency, bidirectional communication.
+	2. Redis maps users to their current chat servers.
+	3. Database first, delivery second protects messages from being lost.
+	4. Kafka + retries + acknowledgements support reliable asynchronous delivery and scalable group fanout.
+	5. Cassandra for messages, PostgreSQL for relational data separates two very different workloads.
+	
+	
+One subtle but important distinction: at-least-once delivery can produce duplicate attempts. Idempotency and deduplication make the user-visible result effectively once. Distributed systems are generous like that: they let you solve one problem and immediately give you three more.
