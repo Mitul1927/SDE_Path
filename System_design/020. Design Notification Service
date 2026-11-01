@@ -1,0 +1,244 @@
+Design Notification System
+
+1. Requirements
+	Functional requirements
+		- Support multiple channels: Email, SMS, Push and In-app.
+		- Support transactional, promotional and system notifications.
+		- Schedule notifications for future delivery.
+		- User preferences: Opt-in / Opt-out.
+		- Rate limiting to prevent notification spam.
+		- Retry failed notifications.
+		- Track notification delivery status.
+	Non-functional requirements
+		- High scalability: Millions of notifications per minute.
+		- High availability.
+		- Reliable delivery (at-least-once).
+		- Low delivery latency.
+		- Fault tolerance and independent channel scaling.
+	
+2. Capacity estimation
+	Metric				Estimate
+	
+	Daily active users		50 million
+	Notifications/user/day		5
+	Notifications/day		250 million
+	Peak notifications/minute	1 million
+	Peak throughput			~17,000/sec
+	Average notification size	1 KB
+	Daily notification storage	250 GB
+
+	Important: Notification systems are write-heavy and experience sudden traffic spikes during sales, OTP requests and major events.
+3. High-level architecture
+				External Services / Applications (Order service · Payment service · Marketing service)
+							||
+				API Gateway / Load Balancer (Authentication · Validation · Rate limiting)
+				 			||
+				Notification Service (Request processing · Template formatting)
+							<>
+							||
+			Preference Service (Opt-in / Opt-out), Scheduler (Delayed delivery)
+							||
+				Message Queue (Kafka / RabbitMQ / AWS SQS)
+							||
+				Email Processor, SMS Processor, Push Processor, In-app Processor
+							||
+				External Providers (SES / SendGrid · Twilio · FCM / APNs · WebSockets)
+
+	Database stores preferences, notification records and delivery logs.
+
+	Main components
+		Component			Responsibility
+		
+		API Gateway			Authentication, validation and rate limiting
+		Notification Service		Accepts and processes requests
+		Preference Service		Manages user notification preferences
+		Scheduler			Stores and triggers scheduled notifications
+		Message Queue			Buffers requests and decouples services
+		Channel Processors		Deliver notifications through individual channels
+		Database			Stores notification records, preferences and logs
+		Redis				Caches preferences and frequently accessed data
+
+4. Notification delivery flow
+	Step-by-step execution
+		1. An application generates a notification request (e.g. order confirmation).
+		2. API Gateway authenticates and validates the request.
+		3. Notification Service fetches user preferences:
+		   - Preferred channel.
+		   - Opt-in / Opt-out status.
+		   - Rate limits.
+		4. If scheduled, send the request to Scheduler Service.
+		5. Generate message using channel-specific templates.
+		6. Push messages into separate queue topics.
+		7. Channel Processors consume their respective messages.
+		8. Send notifications through external providers.
+		9. Receive provider acknowledgement and update delivery status.
+		
+	Example: If a user should receive an order confirmation through Email, SMS and Push, create three separate queue messages.
+		
+5. Message queues and channel processing
+	Use separate topics/queues for each channel.
+		Queue			Consumer		Provider
+		Email Topic		Email Processor		Amazon SES / SendGrid
+		SMS Topic		SMS Processor		Twilio
+		Push Topic		Push Processor		FCM / APNs
+		In-app Topic		In-app Processor	WebSocket / Long Polling
+
+	Why separate queues?
+		- Independent scaling of each channel.
+		- Failure in SMS won't block Email delivery.
+		- Different retry policies per channel.
+		- Better workload isolation.
+		
+	Kafka vs RabbitMQ vs SQS
+		- Kafka: High-throughput event streaming and durable event logs.
+		- RabbitMQ: Flexible routing and message acknowledgements.
+		- AWS SQS: Managed queue with minimal infrastructure management.
+		
+6. Retry mechanism and failure handling
+	Temporary failures should trigger retries.
+
+	Exponential backoff: Each retry waits longer than the previous one.
+
+	Example:
+		Attempt		Retry delay
+		1		1 second
+		2		2 seconds
+		3		4 seconds
+		4		8 seconds
+		5		Move to DLQ
+
+	Dead Letter Queue (DLQ)
+		- Stores messages that fail after maximum retries.
+		- Allows manual inspection and reprocessing.
+		- Prevents repeatedly failing messages from blocking normal processing.
+		
+	Important concepts:
+		- Acknowledge messages only after successful processing.
+		- Use idempotency keys to prevent duplicate notifications.
+		- Retry temporary errors, not permanent errors like invalid email addresses.
+		- Track delivery attempts and failure reasons.
+		
+7. Scheduled notifications
+	Example: Send a reminder tomorrow at 10 AM.
+
+	Flow:
+		1. Notification Service receives a scheduled request.
+		2. Scheduler stores notification with scheduled_time.
+		3. Scheduler periodically checks for due notifications.
+		4. Once due, notification is pushed into the queue.
+		5. Channel Processor delivers it.
+		
+	Database optimization:
+		- Partition scheduled notifications by time.
+		- Index scheduled_time.
+		- Fetch notifications in batches.
+		- Use distributed workers to process different time partitions.
+		
+8. Database design
+	Data				Suggested database			Reason
+	
+	Notification records		PostgreSQL				Structured data and status tracking
+	Delivery logs			PostgreSQL				Auditing and reporting
+	User preferences		DynamoDB / MongoDB			Flexible, scalable user-specific data
+	Scheduled notifications		PostgreSQL / DynamoDB			Time-based queries
+	Cached preferences		Redis					Fast access
+	Attachments			Amazon S3				Large files and media
+
+	Important database concepts
+		- Partition notification logs by date/month.
+		- Shard user data by user_id when necessary.
+		- Archive old notification logs to cheaper storage.
+		- Index user_id, notification_id and scheduled_time.
+		- Maintain separate delivery status for each channel.
+		
+9. Scalability and high availability
+	Horizontal scaling
+		- Run multiple Notification Service instances.
+		- Scale Email, SMS and Push processors independently.
+		- Use distributed queues to handle traffic spikes.
+		- Add consumers when queue lag increases.
+		
+	Caching
+		- Redis caches user preferences.
+		- Cache frequently used notification templates.
+		- Reduce repeated database queries.
+		
+	Database scaling
+		- User-based sharding.
+		- Time-based partitioning for notification logs.
+		- Multi-AZ replication.
+		- Read replicas for reporting queries.
+		
+	High availability
+		- Deploy services across multiple availability zones.
+		- Use load balancers.
+		- Replicate critical data.
+		- Maintain retry and recovery mechanisms.
+		
+10. Rate limiting and user preferences
+	Prevent users from receiving excessive notifications.
+
+	Example:
+		- Maximum 3 promotional notifications per day.
+		- Transactional notifications should not be blocked by promotional limits.
+		- Users can opt out of marketing emails.
+		- Critical security alerts may follow separate delivery policies.
+		
+	Use Redis counters with TTL for efficient rate limiting.
+
+	Example Redis key: notification:promo:user:12345:2026-10-31
+
+
+	Increment the counter for each promotional notification and reject requests after the configured limit.
+	
+11. Monitoring and security
+	Monitoring metrics
+		- Notifications sent per second.
+		- Delivery success/failure rate.
+		- Queue depth and consumer lag.
+		- Average delivery latency.
+		- Retry count.
+		- DLQ message count.
+		- Provider availability.
+	Tools: Prometheus, Grafana, ELK Stack.
+
+	Security
+		- OAuth 2.0 authentication.
+		- RBAC for internal services.
+		- API rate limiting.
+		- Encrypt sensitive notification data.
+		- Secure provider credentials.
+		- Validate user permissions and preferences.
+
+Final interview revision
+	Concept					Solution
+	
+	Asynchronous processing			Kafka / RabbitMQ / SQS
+	Multiple delivery channels		Independent channel processors
+	Scheduled notifications			Scheduler Service
+	User preferences			Preference Service + Redis
+	Rate limiting				Redis counters + TTL
+	Retry mechanism				Exponential backoff
+	Failed messages				Dead Letter Queue
+	Duplicate prevention			Idempotency keys
+	Notification history			PostgreSQL
+	User preference storage			DynamoDB / MongoDB
+	Attachments				S3
+	High availability			Multi-AZ deployment
+	Monitoring				Prometheus + Grafana
+
+
+
+Most important takeaways
+	1. Message Queue: Decouples notification creation from delivery.
+	2. Separate channel processors: Email, SMS and Push scale independently.
+	3. At-least-once delivery: Ensures messages are retried, but duplicates are possible.
+	4. Idempotency: Prevents duplicate notifications during retries.
+	5. Exponential backoff + DLQ: Handles temporary and persistent failures.
+	6. Scheduler: Supports delayed and recurring notifications.
+	7. Redis: Handles preference caching and rate limiting.
+	8. Queue monitoring: Queue lag is an important indicator of processing bottlenecks.
+	
+Interview tip: Focus on the notification delivery flow, queue architecture, retries, idempotency, rate limiting and scheduled delivery. These are the most important design challenges.
+
+One important distinction to remember: A notification being accepted by your queue does not mean it was delivered to the user. Track separate states such as QUEUED, PROCESSING, SENT, DELIVERED and FAILED. Provider acceptance and actual device delivery are not always the same thing.
