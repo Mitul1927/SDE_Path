@@ -1,0 +1,253 @@
+Design Spotify
+
+1. Requirements
+	Functional requirements
+		- Search songs, artists, albums and playlists.
+		- Stream music on demand.
+		- Create, edit, delete and share playlists.
+		- Personalized song recommendations.
+		- Download songs for offline playback (Premium).
+		- Support different audio qualities.
+	Non-functional requirements
+		- Playback should start within 200 ms.
+		- Search response under 100 ms.
+		- High availability: 99.99%.
+		- Global scalability and low latency.
+		- Durable playlists, likes and listening history.
+		- Minimal buffering with adaptive audio quality.
+		
+2. Capacity estimation
+	Metric				Estimate
+	
+	Total users			500 million
+	Daily active users		200 million
+	Streams per day			1 billion
+	Average streams/sec		~11,600
+	Peak streams/sec		~35,000
+	Song catalog			100 million
+	Audio storage			~1 PB
+	Daily bandwidth			~5 PB
+
+	Key observations:
+		- Read-heavy system: millions of plays per song.
+		- Audio files are mostly static, making CDN caching effective.
+		- Metadata can be cached aggressively.
+		- User listening history grows continuously.
+		- CDN is essential to reduce bandwidth costs and latency.
+		
+3. High-level architecture
+
+					Mobile/Web Clients (Search, Play, Playlist, Recommendations) 
+								
+								||
+					
+					API Gateway (Authentication, Routing, Rate limiting) 
+					
+								||
+					
+	Playback Service (Authorization + signed URL), Search Service (Search + ranking), Playlist Service (Playlist management), Recommendation Service (Personalization)
+					
+								||
+								
+					Redis Cache + Database (Metadata · User data · Playlists · History)
+					
+					
+					
+					CDN + Object Storage (S3) (Actual audio file delivery to users)
+					
+					
+					
+	Important: Audio delivery is separate from normal API traffic. API servers authorize playback, while CDN servers deliver the actual audio.
+	
+4. Music streaming flow
+	1. User clicks Play and sends song_id to API Gateway.
+	2. Gateway authenticates user and applies rate limiting.
+	3. Playback Service checks subscription, audio quality and regional licensing.
+	4. Generates a secure, time-limited signed URL.
+	5. Client downloads audio directly from the nearest CDN server.
+	6. If CDN cache misses, it fetches audio from object storage (S3) and caches it.
+	
+	Important concept: Control plane vs Data plane
+		- Control plane: API Gateway + Playback Service handle authorization.
+		- Data plane: CDN handles actual audio delivery.
+		
+	This prevents application servers from becoming a bandwidth bottleneck.
+	
+5. Database Design
+
+	Data				Database			Reason
+	Songs, artists, albums		PostgreSQL			Relationships and complex queries
+	Search index			Elasticsearch			Full-text and fuzzy search
+	Playlists			Cassandra			High read/write throughput
+	Listening history		Cassandra			Write-heavy workload
+	Sessions			Redis				Fast access and TTL
+	Recommendations			Redis				Precomputed results, fast retrieval
+	Audio files			S3 / Object Storage		Large file storage
+
+	Important database concepts:
+		- Cassandra: Partition playlists by user_id.
+		- Playlist songs: Partition by playlist_id, sort by position.
+		- Listening history: Partition by user_id, sort by listened_at DESC.
+		- PostgreSQL: Use read replicas for metadata reads.
+		- Elasticsearch: Maintain a denormalized search index.
+		
+6. Audio streaming architecture
+	Audio processing pipeline
+		Original Audio (WAV / FLAC) -> Transcoding -> Generate different audio qualities -> Chunking -> Split audio into 5–10 second chunks -> DRM Encryption -> Protect copyrighted audio -> Object Storage (S3) -> CDN Distribution -> User Device
+		
+		
+	Audio quality levels
+		Quality			Bitrate			Approx. 4-min file
+		
+		Very High		320 kbps		10 MB
+		High			160 kbps		5 MB
+		Normal			96 kbps			3 MB
+		Low			24 kbps			720 KB
+
+	Streaming protocols
+		Protocol				Key idea
+		
+		Progressive Download			Downloads audio sequentially
+		HLS / DASH				Adaptive bitrate streaming using chunks
+		Custom Protocol				Optimized playback, predictive buffering and gapless playback
+
+	HLS/DASH is a good interview choice because it supports:
+		- Adaptive quality based on network speed.
+		- Efficient seeking.
+		- Chunk-level CDN caching.
+		- Reduced buffering.
+		
+	CDN caching strategy
+		- Cache popular songs at edge locations.
+		- Pre-cache anticipated new releases.
+		- Use predictive caching for upcoming playlist songs.
+		- Cache regionally popular music.
+		- Use long cache TTLs for immutable audio chunks.
+		
+	Pareto principle: A small percentage of popular songs account for most streams, making CDN caching highly effective.
+	
+7. Search and discovery
+	Use Elasticsearch instead of querying PostgreSQL directly.
+
+	Features:
+		- Inverted index for fast searching.
+		- Fuzzy matching for spelling mistakes.
+		- N-gram tokenization for autocomplete.
+		- Relevance-based ranking.
+		- Redis caching for frequently searched queries.
+		
+	Search ranking considers:
+		1. Text relevance.
+		2. Popularity.
+		3. Personalization.
+		4. Recency.
+		
+	Autocomplete can use edge n-grams and client-side debouncing.
+	
+8. Recommendation system
+	Three main approaches:
+		Approach				Working
+		
+		Collaborative Filtering			Users with similar listening preferences get similar recommendations
+		Content-Based Filtering			Recommends songs with similar audio characteristics
+		Hybrid					Combines both approaches
+		
+	Recommendation pipeline:
+		User Activity (Plays, likes, skips, listening history) -> Kafka -> Stream Processing + Batch Processing (Flink / Spark) -> ML Model Training -> Feature Store -> Redis Cache -> Recommendation Service
+		
+	Two processing approaches:
+		- Batch processing: Precompute recommendations daily or weekly, e.g. Discover Weekly.
+		- Real-time processing: Generate recommendations using current listening context.
+		
+	Precomputed recommendations are stored in Redis for fast retrieval.
+	
+9. Scalability and high availability
+	Horizontal scaling
+		- Keep application services stateless.
+		- Add instances as traffic increases.
+		- Use Kubernetes HPA for automatic scaling.
+		
+	Database scaling
+		- Cassandra: Add nodes and distribute data using partitioning.
+		- PostgreSQL: Read replicas for read-heavy workloads.
+		- Elasticsearch: Add nodes and distribute indexes using shards.
+		
+	Multi-layer caching
+		Layer			Cached data
+		
+		Client			Recently played, preferences
+		CDN			Audio files, album artwork
+		Redis			Metadata, sessions, recommendations
+		Database		Frequently accessed pages in buffer pool
+		
+	High availability
+		- Multi-region active-active deployment.
+		- Route users to nearest region.
+		- Replicate data across regions.
+		- Graceful degradation if non-critical services fail.
+		
+	Example: If Recommendation Service fails, show cached popular playlists instead.
+
+	Key principle: Playback should continue even if recommendations or search become unavailable.
+	
+10. Offline playback
+	Premium users can download songs for offline listening.
+
+	Flow:
+		1. User requests download.
+		2. Download Service validates subscription and region.
+		3. Generate device-specific encrypted license.
+		4. Download encrypted audio from CDN.
+		5. Store audio locally in encrypted storage.
+		
+	Important concepts:
+		- DRM encryption protects downloaded audio.
+		- License expiry (30 days in the blog's example).
+		- Periodic subscription verification.
+		- Device and download limits.
+		
+11. Playback tracking and royalty calculation
+	Every playback event must be recorded for analytics and royalty calculations.
+	Event pipeline:
+		Client Playback Events -> Play · Pause · Skip · Complete -> Event Collector -> Kafka -> Flink / Spark Streaming -> Fraud Detection -> Analytics + Royalty Calculation
+
+	- Batch events to reduce network overhead.
+	- Kafka provides durable event buffering.
+	- Stream processing determines valid streams.
+	- Fraud detection identifies artificial plays.
+	- Valid stream data feeds royalty calculations.
+	
+	A song played for at least 30 seconds counts as a stream.
+	
+	
+	
+
+Final interview revision: Important concepts
+	Concept					Technology / Solution
+	
+	Audio delivery					CDN
+	Audio storage					S3
+	Playback authorization				Signed URLs
+	Adaptive streaming				HLS / DASH
+	Search						Elasticsearch
+	Caching						Redis
+	Relational metadata				PostgreSQL
+	High-volume history				Cassandra
+	Event processing				Kafka
+	Stream processing				Flink
+	Batch ML processing				Spark
+	Recommendations					Collaborative + Content-Based Filtering
+	High availability				Multi-region deployment
+	Offline downloads				DRM + encrypted storage
+
+Most important takeaways
+	1. CDN: Never stream massive audio files through application servers.
+	2. Signed URLs: Securely authorize temporary access to audio.
+	3. HLS/DASH: Split audio into chunks and dynamically adjust quality.
+	4. Polyglot persistence: Choose databases based on access patterns.
+	5. Redis: Cache frequently accessed metadata and recommendations.
+	6. Kafka: Decouple playback events from analytics and ML processing.
+	7. Batch + Real-time ML: Precompute expensive recommendations and serve them quickly.
+	8. Graceful degradation: Playback must remain available even if secondary services fail.
+	
+Spend the most time explaining the streaming flow, CDN caching, adaptive bitrate streaming and recommendation architecture. Those are the core engineering challenges in designing Spotify.
