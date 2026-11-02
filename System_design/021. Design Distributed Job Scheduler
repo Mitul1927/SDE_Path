@@ -1,0 +1,237 @@
+Design a Distributed Job Scheduler
+
+1. What is a Distributed Job Scheduler?
+	A distributed job scheduler manages and executes tasks (jobs) across multiple machines or worker nodes.
+
+	Examples:
+		- Generate daily reports.
+		- Send scheduled emails.
+		- Run database backups.
+		- Process files in batches.
+		- Execute recurring tasks.
+		- Trigger payment reminders.
+		
+2. Requirements
+	Functional requirements
+		- Submit one-time and recurring jobs.
+		- Cancel submitted jobs.
+		- Distribute jobs across multiple workers.
+		- Track job status: Pending, Running, Completed, Failed.
+		- Prevent concurrent execution of the same job.
+		
+	Non-functional requirements
+		- Scalability: Handle millions of jobs.
+		- High availability: No single point of failure.
+		- Fault tolerance: Reassign jobs when workers fail.
+		- Low scheduling and execution latency.
+		- Consistency: Minimize duplicate execution.
+		
+3. High-level architecture
+					Client / Application (Submit · Update · Cancel Jobs)
+								||
+					Job Submission Service (REST APIs · Validation)
+								||
+					Job Store (Job metadata · Execution history · Schedules)
+								<>
+								||
+					Scheduling Service (Finds jobs whose next_run_time is due)
+								||
+					Distributed Job Queue (Kafka / RabbitMQ)
+								||
+					Execution Service / Coordinator (Worker assignment · Load balancing · Failure detection)
+								||
+					Worker 1 (Execute jobs), Worker 2 (Execute jobs), Worker 3 (Execute jobs)
+
+
+	Main components
+		Component				Responsibility
+		
+		Job Submission Service			Accepts job requests
+		Job Store				Stores job metadata and status
+		Scheduling Service			Identifies jobs due for execution
+		Job Queue				Buffers and distributes jobs
+		Coordinator				Assigns jobs and monitors workers
+		Worker Nodes				Execute actual jobs
+
+4. Database design
+	Maintain four main tables.
+		Table				Important fields							Purpose
+		
+		Job				job_id, user_id, payload, frequency, status, retry_count		Stores job details
+		Job Execution			execution_id, job_id, worker_id, start_time, end_time, status		Tracks execution attempts
+		Job Schedules			job_id, next_run_time, last_run_time					Tracks upcoming executions
+		Worker				worker_id, IP, status, heartbeat, capacity				Tracks worker health
+
+	Important concepts:
+		- next_run_time: Determines when a job should execute.
+		- retry_count: Number of failed attempts.
+		- last_run_time: Last execution timestamp.
+		- heartbeat: Indicates whether a worker is alive.
+		
+	Job lifecycle
+		PENDING -> SCHEDULED -> RUNNING -> COMPLETED
+						|-> FAILED
+
+
+
+5. Job scheduling mechanism
+	Scheduling Service periodically checks the Job Schedules table for jobs whose execution time has arrived.
+
+	Example SQL:
+		SELECT *
+		FROM JobSchedules
+		WHERE next_run_time <= NOW();
+
+
+	Execution flow:
+		1. Scheduler identifies due jobs.
+		2. Marks them as scheduled.
+		3. Pushes jobs into Kafka/RabbitMQ.
+		4. Workers consume jobs from the queue.
+		5. Workers execute jobs.
+		6. Update job status and execution history.
+		7. For recurring jobs, calculate and update next_run_time.
+		
+	Important: Use atomic claiming or locking while fetching due jobs so multiple schedulers don't schedule the same job concurrently.
+	
+6. Scaling the Scheduling Service
+	A single scheduler becomes a bottleneck when thousands of jobs become due simultaneously.
+
+	Solution: Segmentation
+		- Divide jobs into logical segments.
+		- Assign different segments to different scheduler workers.
+		- Each worker processes only its assigned segments.
+		- Coordinator manages segment assignments.
+		- Rebalance segments when workers join or fail.
+		
+	Example:
+		Scheduler Worker	Assigned segments
+		Worker 1		1, 2
+		Worker 2		3, 4
+		Worker 3		5, 6
+
+	Example query:
+		SELECT *
+		FROM JobSchedules
+		WHERE next_run_time <= NOW()
+		AND segment IN (1, 2);
+
+
+	Benefits:
+		- Parallel job scheduling.
+		- Reduced database contention.
+		- No overlapping ownership when assignments are properly coordinated.
+		- Easier horizontal scaling.
+		
+7. Handling job failures
+	Use retry mechanisms with exponential backoff.
+
+	Example:
+		Attempt			Retry delay
+		1			1 minute
+		2			5 minutes
+		3			10 minutes
+		4			Mark as FAILED
+
+	Failure handling:
+		- Increment retry_count.
+		- Check against max_retries.
+		- Retry temporary failures after a delay.
+		- Mark permanently failed jobs as FAILED.
+		- Store error messages for debugging.
+	Important: Make job execution idempotent because retries can execute a job more than once.
+	
+8. Worker node failure handling
+	Workers periodically send heartbeat signals to the Coordinator.
+
+	Example:
+		- Worker sends heartbeat every 5 seconds.
+		- Coordinator misses 3 consecutive heartbeats.
+		- Worker is marked unhealthy.
+		- Its pending jobs are reassigned.
+		- In-progress jobs are recovered or retried.
+		
+	Two failure scenarios
+		A. Pending jobs
+			- Jobs not yet started are reassigned to healthy workers.
+
+		B. In-progress jobs
+			- Use checkpointing for long-running jobs.
+			- Save execution progress periodically.
+			- Another worker resumes from the last checkpoint.
+			- If checkpointing is unavailable, restart the job with idempotency protection.
+		
+9. Handling coordinator failure
+	The Coordinator itself can become a Single Point of Failure (SPOF).
+
+	Solution: Leader Election
+		- Deploy multiple coordinator instances.
+		- Elect one active leader.
+		- Keep other instances as standby nodes.
+		- If leader fails, elect a new leader.
+		
+	Technologies:
+		- ZooKeeper
+		- etcd
+		- Raft / Paxos consensus algorithms
+	The coordinators share scheduling and worker-health state through persistent storage.
+	
+10. Rate limiting
+	Rate limiting is required at three levels.
+		Level			Purpose
+		
+		Job Submission		Prevent clients from submitting too many jobs
+		Job Queue		Prevent queue overload
+		Worker Node		Limit concurrent job execution
+
+	Example:
+		- Maximum 1,000 job submissions per client per minute.
+		- Queue throttling controls enqueue rate.
+		- Each worker has a maximum concurrency limit.
+		
+	This prevents CPU, memory and database overload.
+	
+11. API design
+	Method		Endpoint				Purpose
+	
+	POST		/jobs					Submit job
+	GET		/jobs/{job_id}				Get job status
+	DELETE		/jobs/{job_id}				Cancel job
+	GET		/jobs?status=pending			List pending jobs
+	GET		/job/executions?worker_id=w001		Get worker executions
+
+
+Final interview revision
+	Concept						Solution
+	
+	Job submission					REST API
+	Job persistence					DynamoDB / Cassandra
+	Scheduling					Scheduling Service
+	Job distribution				Kafka / RabbitMQ
+	Worker management				Coordinator
+	Parallel scheduling				Segmentation
+	Worker health					Heartbeats
+	Job retries					Exponential backoff
+	Long-running jobs				Checkpointing
+	Coordinator failure				Leader election
+	Duplicate execution				Idempotency + distributed locking
+	Rate limiting					Client, queue and worker limits
+
+Most important takeaways
+	1. Job Queue: Decouples scheduling from execution.
+	2. Segmentation: Distributes scheduling workload across multiple nodes.
+	3. Heartbeat: Detects unhealthy workers.
+	4. Checkpointing: Helps recover long-running jobs.
+	5. Leader Election: Prevents coordinator from becoming a single point of failure.
+	6. Exponential Backoff: Avoids repeatedly retrying failed jobs immediately.
+	7. Idempotency: Protects against duplicate side effects.
+	8. Horizontal Scaling: Add scheduler and worker nodes as workload increases.
+	
+Important interview concept: At-least-once vs Exactly-once execution
+	- At-most-once: A job executes zero or one times, but can be lost.
+	- At-least-once: A job is retried until successful, but duplicate execution is possible.
+	- Exactly-once effect: Achieved through idempotency, deduplication and transactional state management, rather than simply relying on the queue.
+	
+Interview tip: Focus on segmentation, worker failure recovery, leader election and retry mechanisms. These are the core challenges in building a distributed job scheduler.
+
+The biggest lesson: A distributed scheduler must guarantee that jobs aren't silently lost, even when machines crash halfway through doing their work. Machines, like humans, have an unfortunate habit of failing at inconvenient times.
