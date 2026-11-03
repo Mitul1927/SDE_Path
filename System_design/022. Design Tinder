@@ -1,0 +1,230 @@
+Design Tinder
+
+1. Requirements
+	Functional requirements
+		1. Create and manage user profiles.
+		2. Upload and display profile pictures.
+		3. Recommend nearby users based on preferences.
+		4. Swipe left (Reject) or right (Like).
+		5. Create a match when two users like each other.
+		6. Allow matched users to chat.
+		
+	Non-functional requirements
+		- High availability.
+		- Low-latency recommendations.
+		- Scalable image storage.
+		- Real-time messaging.
+		- Fault tolerance.
+		- Horizontally scalable services.
+		
+2. High-level architecture
+					Mobile Application (Profile · Swipe · Match · Chat)
+								||
+					API Gateway (Authentication · Routing · Token validation)
+								||
+Profile Service (User details), Image Service (Profile pictures), Recommendation Service (Nearby users), Matcher Service (Likes and matches), Session Service (Active connections and user sessions)
+								||
+					Databases + Distributed File Storage (User data · Swipes · Matches · Images)
+							
+
+					CDN (Fast image delivery)
+
+
+3. Profile and image storage
+	Profile Service
+		- Stores name, age, gender, location and preferences.
+		- Stores image IDs or image URLs, not actual image files.
+		- Handles profile creation and updates.
+		
+	Image Service
+		- Handles image uploads and retrieval.
+		- Stores images in distributed file storage (S3-like storage).
+		- Maintains mapping between profile_id, image_id and image URL.
+		
+	Why file storage instead of database BLOBs?
+		File/Object Storage				Database BLOB
+		
+		Cheaper for large files				Can increase database costs
+		CDN integration is easy				CDN integration needs additional handling
+		Separates image traffic				Can affect database performance
+		Suitable for static images			Better when binary data needs DB transactions
+
+	Important: Store image metadata in the database and actual images in object storage. Use CDN to deliver images quickly.
+	
+4. API Gateway and authentication
+	API Gateway acts as the single entry point for clients.
+
+	Responsibilities:
+		- Validate authentication tokens.
+		- Route requests to appropriate microservices.
+		- Centralize authentication logic.
+		- Avoid duplicating authentication code in every service.
+		
+	Request flow:
+		1. Client sends request with authentication token.
+		2. Gateway validates the token with the authentication/profile service.
+		3. Gateway forwards authorized requests to the required service.
+		4. Unauthorized requests are rejected.
+		
+	Token-based authentication avoids sending usernames and passwords with every request.
+	
+5. Direct messaging and chat
+	Traditional HTTP follows a request-response model. The client must repeatedly request new messages (polling).
+
+	For real-time chat, use WebSocket / XMPP.
+	
+		Why WebSocket?
+			- Persistent TCP connection.
+			- Bidirectional communication.
+			- Server can push messages to clients.
+			- Avoids repeated polling requests.
+	
+	Session Service
+		Maintains mapping between users and active connections.
+
+	Example:
+		User ID		Connection ID		Gateway
+		
+		101		conn_abc		Gateway 1
+		102		conn_xyz		Gateway 2
+
+	Chat flow:
+		1. User A sends a message.
+		2. Gateway authenticates User A.
+		3. Matcher Service verifies that A and B are matched.
+		4. Session Service finds User B's active connection.
+		5. Message is pushed through User B's gateway connection.
+		
+	If User B is offline, the message needs durable storage and delivery when they reconnect.
+
+	Key concept: Keep connection management separate from API Gateway using Session Service.
+	
+6. Matching algorithm
+	Tinder matching is based on mutual likes.
+
+		Example:
+			- User A likes User B.
+			- User B likes User A.
+			- Both users become a match.
+	Flow:
+		User A swipes right on B -> Matcher Service stores A → B -> Check whether B → A exists -> Mutual Like Found -> Create Match
+
+	Allow chat between A and B
+
+		- Store swipe and match information on the server.
+		- Maintain a match table containing both user IDs.
+		- Matcher Service validates whether two users can chat.
+		- Matches must survive app uninstall/reinstall.
+		
+	Important: The client can maintain local swipe history for UX optimization, but the server must remain the source of truth.
+	
+7. Recommendation Engine
+	The Recommendation Service suggests nearby users based on:
+		- Location.
+		- Age.
+		- Gender.
+		- User preferences.
+		
+	Main challenge: Finding nearby users while applying multiple filters at scale.
+	
+	Database approaches
+		Approach 1: NoSQL (Cassandra / DynamoDB)
+			- Replicate data into multiple tables based on query patterns.
+			- Optimize reads for different recommendation queries.
+			- Scale horizontally.
+		
+		Approach 2: Relational database sharding
+			- Divide users across multiple database nodes.
+			- Route requests to the relevant shard.
+			- Replicate each shard for availability.
+		
+	Location-based sharding
+		The video suggests partitioning users based on geographic regions.
+
+		Example:
+			Shard			Geographic area
+			
+			Shard 1			Delhi region
+			Shard 2			Mumbai region
+			Shard 3			Bangalore region
+
+		For more granular partitioning, divide cities into smaller geographic chunks.
+
+	Recommendation flow:
+		1. Get the user's current location.
+		2. Identify the relevant geographic shard.
+		3. Fetch nearby users.
+		4. Filter by age, gender and preferences.
+		5. Exclude previously rejected or viewed profiles.
+		6. Return recommended profiles.
+		
+	Optimization: Periodically update user location, rather than constantly writing location changes.
+	
+8. Sharding and Consistent Hashing
+	Sharding (Horizontal Partitioning)
+
+	Divides a large dataset into smaller datasets distributed across multiple database nodes.
+
+	Benefits:
+		- Distributes storage.
+		- Improves query performance.
+		- Supports horizontal scaling.
+		
+	Consistent Hashing
+		- Maps users or geographic partitions onto a hash ring.
+		- Distributes data across nodes.
+		- Reduces data movement when nodes are added or removed.
+		- Virtual nodes help balance load.
+		
+	Replication:
+		- Each shard can have primary and replica nodes.
+		- Replicas improve availability.
+		- Failed nodes can be replaced or promoted.
+	
+9. Important design decisions
+	Problem						Solution
+	
+	Large image storage				Distributed file/object storage
+	Fast image loading				CDN
+	Authentication duplication			API Gateway
+	Real-time chat					WebSocket / XMPP
+	User connection lookup				Session Service
+	Mutual likes					Matcher Service
+	Nearby user discovery				Geographic sharding
+	Large database scaling				Horizontal partitioning
+	Node addition/removal				Consistent hashing
+	Duplicate profile recommendations		Client-side swipe history / Bloom filter
+
+
+Final interview revision
+	Most important concepts to remember
+		Concept					What to remember
+		
+		Microservices				Separate Profile, Image, Matcher, Session and Recommendation services
+		Object Storage				Store images separately from profile data
+		CDN					Deliver images with low latency
+		API Gateway				Centralized authentication and routing
+		WebSocket				Persistent, bidirectional chat communication
+		Session Service				Maps user IDs to active connections
+		Matcher Service				Validates mutual likes and matches
+		NoSQL					Supports scalable query-specific data models
+		Sharding				Splits data across database nodes
+		Consistent Hashing			Distributes data and minimizes redistribution
+		Replication				Improves availability and fault tolerance
+		Bloom Filter				Helps avoid recommending previously seen profiles
+
+10 key takeaways
+	1. Start system design with user-facing features, not database tables.
+	2. Separate image storage from profile metadata.
+	3. Use CDN for static image delivery.
+	4. API Gateway centralizes authentication and routing.
+	5. WebSocket is better suited for real-time chat than HTTP polling.
+	6. Session Service maintains user-to-connection mapping.
+	7. Matcher Service checks mutual likes before allowing chat.
+	8. Geographic sharding makes nearby-user discovery scalable.
+	9. Consistent hashing helps distribute data across nodes.
+	10. Replication prevents individual database node failures from bringing down the system.
+	
+Interview tip: Focus on three major challenges: real-time chat using WebSockets, mutual matching using Matcher Service, and nearby-user recommendations using geographic sharding.
+
+One subtle distinction: A swipe is not a match. A match happens only when both users like each other. Keeping that validation server-side is essential for security and consistency.
