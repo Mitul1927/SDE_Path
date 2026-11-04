@@ -1,0 +1,230 @@
+Design Twitter
+
+1. Requirements
+	Functional requirements
+		- Create and publish tweets.
+		- Follow and unfollow users.
+		- View personalized home timeline.
+		- Like and retweet posts.
+		- Search tweets and users.
+		- View user profiles and followers.
+		
+	Non-functional requirements
+		- High availability.
+		- Low-latency timeline generation.
+		- Horizontal scalability.
+		- Eventual consistency for timelines.
+		- Durable tweet storage.
+		- Handle millions of concurrent users.
+		
+2. High-level architecture
+					Mobile / Web Clients (Tweet · Follow · Like · Read timeline)
+								||
+					Load Balancer / API Gateway (Authentication · Request routing)
+								||
+			Tweet Service (Create tweets), User Service (Profiles and follows), Timeline Service (Generate feeds), Search Service (Tweet search)
+								<>
+								||
+				Kafka / Redis / Databases (Event processing · Timeline cache · Persistent storage)
+
+
+	Main components
+		Component			              Responsibility
+		
+		Tweet Service		          	Creates and stores tweets
+		User Service		           	Manages users and follow relationships
+		Timeline Service		        Builds personalized home feeds
+		Kafka				                Distributes tweet events
+		Redis				                Caches timelines and frequently accessed data
+		Search Service			        Indexes and searches tweets
+		Database			              Stores tweets, users and relationships
+
+3. Tweet creation flow
+	1. User creates a tweet.
+	2. Request reaches Tweet Service through API Gateway.
+	3. Tweet Service validates and stores the tweet.
+	4. Generate a unique Tweet ID.
+	5. Publish a tweet-created event to Kafka.
+	6. Timeline Service consumes the event.
+	7. Identify followers of the tweet author.
+	8. Add the tweet to followers' home timelines (fanout).
+	
+	Important: Tweet creation and timeline distribution should be asynchronous. This avoids making the user wait for thousands or millions of follower updates.
+	
+4. Timeline generation
+	The home timeline displays tweets from users that the current user follows.
+
+	There are two main approaches.
+		A. Fanout on Write (Push Model)
+			When a user publishes a tweet, push that tweet into the timelines of all their followers.
+			
+			User A publishes a tweet -> Tweet Service -> Kafka -> Timeline Fanout Workers -> User B (Timeline updated), User C (Timeline updated), User D (Timeline updated)
+
+			Advantages
+				- Fast timeline reads.
+				- Timeline is already prepared.
+				- Good for users with fewer followers.
+				
+			Disadvantages
+				- Expensive writes when users have millions of followers.
+				- Large fanout workload.
+				- Storage overhead due to duplicated timeline references.
+				
+		B. Fanout on Read (Pull Model)
+			Instead of updating followers' timelines during tweet creation, fetch tweets from followed users when someone opens their home timeline.
+
+			Flow:
+				1. User opens home timeline.
+				2. Fetch list of followed users.
+				3. Fetch their latest tweets.
+				4. Merge and sort tweets by timestamp.
+				5. Return the latest tweets.
+				
+			Advantages
+				- Less work during tweet creation.
+				- Suitable for celebrities with millions of followers.
+				- No need to push tweets to every follower.
+				
+			Disadvantages
+				- More expensive timeline reads.
+				- Higher read latency.
+				- Requires merging tweets from multiple users.
+				
+		C. Hybrid Fanout (Best approach)
+			Combine both approaches.		
+				User type				                      	Strategy
+				
+				Normal users					                  Fanout on Write
+				Celebrities / High-follower users	    	Fanout on Read
+
+		Example:
+			- Normal user with 500 followers publishes a tweet. Push it to all 500 timelines.
+			- Celebrity with 10 million followers publishes a tweet. Do not push to all 10 million timelines.
+			- Fetch celebrity tweets when followers request their home timeline.
+			
+		Key interview concept - Hybrid fanout balances write scalability and read latency.
+		
+5. Database design
+	Data			            	Storage				                      	Purpose
+	
+	User profiles			      MySQL / PostgreSQL			              User information
+	Tweets			          	Cassandra / distributed storage		    High-volume tweet storage
+	Followers / Following		Graph or NoSQL storage		          	Follow relationships
+	Home timelines		     	Redis				                        	Fast timeline retrieval
+	Search index			      Elasticsearch / Earlybird		          Tweet search
+	Events			          	Kafka					                        Asynchronous processing
+
+	Important concepts
+		- Generate unique Tweet IDs using Snowflake-style IDs.
+		- Store tweet references in timeline caches rather than copying full tweet content.
+		- Sort timelines by Tweet ID or creation timestamp.
+		- Use pagination with cursors.
+		- Cache frequently accessed tweets and profiles.
+		
+6. Handling celebrity users
+	Problem: A celebrity has 10 million followers. Every tweet creates 10 million timeline updates.
+
+	This creates a fanout bottleneck.
+
+	Solution:
+		- Identify high-follower accounts.
+		- Exclude them from normal fanout-on-write.
+		- Store their tweets separately.
+		- Merge their recent tweets when followers fetch their timelines.
+		- Cache celebrity tweets to reduce repeated database reads.
+		
+	This is one of the main reasons hybrid fanout is useful.
+	
+7. Kafka and asynchronous processing
+	Kafka acts as a communication layer between Tweet Service and Timeline Service.
+
+	Flow:
+		Tweet Service -> Kafka Topic: Tweet Created -> Multiple Fanout Workers -> Redis Timeline Cache -> Followers' Home Feeds
+
+	Benefits:
+		- Decouples tweet creation from timeline updates.
+		- Supports parallel processing.
+		- Handles traffic spikes.
+		- Allows retries when workers fail.
+		- Prevents temporary downstream failures from blocking tweet creation.
+		
+8. Search architecture
+	Twitter needs to search millions of tweets efficiently.
+
+	Use an inverted index.
+
+	Example:
+
+		Tweets:
+		- T1: Java is powerful.
+		- T2: Java and Spring Boot.
+		- T3: Python is easy.
+		
+	Inverted index:
+		Word		Tweet IDs
+		
+		Java		  T1, T2
+		Spring		T2
+		Python		T3
+
+	When users search for Java, the search engine quickly finds T1 and T2.
+
+	Technology: Earlybird is Twitter's historically used real-time search system.
+	
+9. Caching and scalability
+	Redis
+		- Cache home timelines.
+		- Cache popular tweets.
+		- Cache user profiles.
+		- Reduce database reads.
+		
+	Horizontal scaling
+		- Add more Tweet Service instances.
+		- Increase Kafka partitions and consumers.
+		- Distribute timeline processing across workers.
+		- Shard tweet storage.
+		- Replicate data for availability.
+		
+	Additional technologies mentioned in discussions of Twitter's architecture:
+		Technology			            Purpose
+		
+		Redis Cluster			          Distributed caching
+		Kafka / Kafka Streams	    	Event processing
+		Apache Storm			          Real-time stream processing
+		Earlybird		               	Tweet search
+		ZooKeeper		              	Distributed coordination
+
+	These are historical architecture references, not a claim about Twitter/X's current complete technology stack. 
+
+
+Final interview revision
+	Concept				        	What to remember
+	
+	Fanout on Write			  	Push tweets to followers when created
+	Fanout on Read			  	Fetch tweets when timeline is requested
+	Hybrid Fanout			    	Push for normal users, pull for celebrities
+	Kafka					          Asynchronous event processing
+	Redis					          Timeline caching
+	Snowflake IDs			    	Unique, time-sortable IDs
+	Inverted Index			  	Fast tweet search
+	Earlybird			        	Real-time search
+	ZooKeeper			        	Distributed coordination
+	Horizontal Scaling			Add more service instances
+
+10 key takeaways
+	1. Twitter is a read-heavy social networking system.
+	2. Timeline generation is the biggest architectural challenge.
+	3. Fanout-on-write improves read performance.
+	4. Fanout-on-read avoids expensive writes for celebrities.
+	5. Hybrid fanout combines both approaches.
+	6. Kafka decouples tweet creation from timeline distribution.
+	7. Redis provides fast timeline retrieval.
+	8. Snowflake IDs help generate unique, sortable tweet identifiers.
+	9. Inverted indexes make text search efficient.
+	10. Eventual consistency is acceptable for home timelines.
+	
+	
+Interview tip: Spend most of your time understanding fanout-on-write vs fanout-on-read. Be able to explain why a celebrity with millions of followers creates a completely different scaling problem from a normal user.
+
+
+The central lesson: In Twitter, writing one tweet is easy. Delivering that tweet to millions of followers without bringing your infrastructure to its knees is the actual system design problem.
