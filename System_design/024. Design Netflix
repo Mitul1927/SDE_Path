@@ -1,0 +1,234 @@
+Design Netflix
+
+1. Requirements
+	Functional requirements
+		- Browse movies and TV shows.
+		- Search movies by title, genre and actors.
+		- Stream videos on demand.
+		- Resume playback from the last watched position.
+		- Support multiple devices.
+		- Provide personalized recommendations.
+		- Support different video qualities.
+		- Download content for offline viewing.
+		
+	Non-functional requirements
+		- High availability.
+		- Low video startup latency.
+		- Minimal buffering.
+		- High scalability across countries.
+		- Adaptive video quality.
+		- Reliable content delivery.
+		- Fault tolerance.
+		
+2. High-level architecture
+						Netflix Client (Mobile · TV · Web)
+								||
+						API Gateway (Authentication · Routing · Request handling)
+								||
+		User Service (Profiles), Catalog Service (Movies and metadata), Recommendation (Personalized content), Playback Service (Streaming authorization)
+								||
+				Metadata Database + Cache (User data · Catalog · Watch history)
+				
+					
+						CDN / Open Connect (Video chunks delivered from nearby edge servers)
+
+
+	Important: Application servers handle metadata and playback authorization. CDN infrastructure handles actual video delivery.
+	
+3. Three major components
+	The video divides Netflix architecture into three main parts:
+		Component			Responsibility
+		
+		Client				Mobile, TV, browser and gaming consoles
+		Backend (AWS)			Authentication, search, recommendations and metadata
+		Open Connect			Actual video delivery through distributed CDN servers
+
+	Important distinction:
+		- Backend handles application requests.
+		- Open Connect handles heavy video traffic.
+		- This separation prevents video bandwidth from overloading backend servers.
+		
+4. Video processing and onboarding
+	Before a movie becomes available for streaming, it goes through a processing pipeline.
+		Original Video File -> Validation (Check file format, quality and errors) -> Transcoding (Convert into multiple resolutions and bitrates) -> Chunking (Split video into smaller segments) -> Amazon S3 (Store processed video files) -> Open Connect CDN (Distribute content globally)
+
+	Why transcoding?
+		Different devices and network conditions require different video qualities.
+
+		Example:
+			Quality			Resolution
+			
+			Low			240p
+			Medium			480p
+			HD			720p
+			Full HD			1080p
+			Ultra HD		4K
+
+		- One original video produces multiple encoded versions.
+		- The video can be divided into chunks.
+		- Different workers process different chunks in parallel.
+		- Processed versions are stored in S3.
+		
+	The video mentions approximately 1,200 versions of a movie as an illustrative processing estimate. The exact number depends on encoding profiles and device requirements. 
+	Video Highlight
+
+5. Adaptive Bitrate Streaming (ABR)
+	Problem: Internet speed changes continuously. A fixed-quality stream can cause buffering.
+
+	Solution: Adaptive Bitrate Streaming automatically adjusts video quality based on available bandwidth.
+
+	Example:
+		Internet speed			Streaming quality
+		
+		2 Mbps				480p
+		5 Mbps				720p
+		10 Mbps				1080p
+		25 Mbps				4K
+
+	Working:
+		1. Video is divided into small chunks.
+		2. Each chunk is available in multiple qualities.
+		3. Client monitors network speed and buffer status.
+		4. Client selects the appropriate quality for the next chunk.
+		5. If internet speed decreases, quality drops.
+		6. When speed improves, quality increases.
+		
+	Important: Quality selection happens on the client side based on network conditions.
+	
+6. Open Connect (Netflix CDN)
+	**Most important concept**
+	Open Connect is Netflix's proprietary Content Delivery Network (CDN).
+
+	Problem:
+
+		If a user in India requests a movie stored in a US data center, the video must travel a long distance.
+
+		This creates:
+			- High latency.
+			- Increased bandwidth costs.
+			- Network congestion.
+			- Buffering.
+	Solution:
+
+		Netflix places cache servers close to users, often inside Internet Service Provider (ISP) networks.
+		
+		Netflix Origin Storage (Master processed video files) -> Open Connect Appliances (OCAs) (Distributed cache servers inside ISP networks) -> ISP Network A (Nearby users) -> ISP Network B (Nearby users)
+
+	How Open Connect works
+		1. Netflix predicts which movies will be popular in different regions.
+		2. Popular content is preloaded into nearby Open Connect servers.
+		3. User requests a movie.
+		4. Netflix identifies a suitable nearby server.
+		5. Video is streamed directly from that server.
+		
+	Benefits:
+		- Lower latency.
+		- Reduced bandwidth costs.
+		- Less load on origin storage.
+		- Faster video playback.
+		
+	Content caching strategy
+		- Globally popular content is cached widely.
+		- Regionally popular content is cached in relevant locations.
+		- Upcoming episodes can be preloaded based on viewing trends.
+		- Content is distributed during off-peak hours.
+		
+7. Load balancing
+	Netflix uses load balancing to distribute incoming application traffic across multiple backend instances.
+
+	Two-tier load balancing:
+		- First level: DNS-based routing distributes traffic across regions or availability zones.
+		- Second level: Load balancers distribute requests across service instances.
+		
+	Benefits:
+		- Avoids overloading a single server.
+		- Improves availability.
+		- Supports horizontal scaling.
+		- Handles traffic spikes.
+		
+8. Recommendation Engine
+	Netflix collects user activity to personalize content recommendations.
+
+	Data collected:
+		- Watch history.
+		- Search history.
+		- Likes and ratings.
+		- Genres watched.
+		- Time spent watching.
+		- Skipped content.
+		
+	Recommendation techniques
+		Technique			Working
+		
+		Collaborative Filtering		Recommends content based on users with similar interests
+		Content-Based Filtering		Recommends content similar to previously watched movies
+
+	Processing flow:
+		User Activity -> Data Collection -> Machine Learning Models -> Personalized Recommendations -> Netflix Homepage
+
+	Thumbnail optimization
+		Netflix also tests multiple thumbnails for the same movie.
+			- Different users may see different artwork.
+			- A/B testing measures engagement and click-through rates.
+			- The most effective artwork can be selected based on user behavior.
+			
+9. Open Connect Appliance (OCA)
+	An OCA is a physical server containing cached Netflix content.
+
+	Important characteristics:
+		- Located inside ISP networks.
+		- Contains storage devices for video files.
+		- Designed for high availability.
+		- Uses redundant hardware components.
+		- Serves video content directly to nearby users.
+		
+	Cache distribution
+		- Popular content is replicated across multiple servers.
+		- Different servers can store different portions of the catalog.
+		- Consistent hashing can help distribute content across cache nodes.
+		- Cache placement considers regional popularity and demand.
+
+
+Final interview revision
+	Concept					Technology / Solution
+
+	Backend infrastructure			AWS
+	Load balancing				Elastic Load Balancing
+	Video storage				Amazon S3
+	Video processing			Transcoding workers
+	Video delivery				Open Connect CDN
+	Edge caching				Open Connect Appliances
+	Video quality adjustment		Adaptive Bitrate Streaming
+	Video segmentation			Small video chunks
+	Recommendation				Collaborative + Content-Based Filtering
+	Personalization				Machine Learning
+	Thumbnail optimization			A/B Testing
+	Cache distribution			Consistent Hashing
+
+10 key takeaways
+	1. Separate backend and video delivery: Backend handles APIs; CDN delivers video.
+	2. Transcoding: Convert original videos into multiple resolutions and bitrates.
+	3. Parallel processing: Multiple workers process video chunks simultaneously.
+	4. S3: Store processed video files.
+	5. Open Connect: Netflix's distributed CDN reduces latency and bandwidth costs.
+	6. Adaptive Bitrate: Adjust video quality according to network conditions.
+	7. Pre-caching: Store popular content near users before they request it.
+	8. Load balancing: Distribute application traffic across backend servers.
+	9. Recommendation Engine: Use user behavior to personalize content.
+	10. A/B Testing: Experiment with thumbnails and measure engagement.
+	
+	
+Important interview questions
+	Make sure you understand these five concepts:
+		- Why does Netflix need its own CDN instead of relying entirely on centralized storage?
+		- Why do we transcode a video into multiple resolutions?
+		- How does Adaptive Bitrate Streaming prevent buffering?
+		- What is the difference between origin storage and edge caching?
+		- Why is pre-caching content better than fetching everything on demand?
+		
+		
+Interview tip: Focus most on the three major engineering challenges: video transcoding, adaptive bitrate streaming and Open Connect CDN. These are the heart of Netflix's architecture.
+
+
+
+The biggest lesson: Netflix does not send an entire movie from one central server every time someone presses Play. It prepares multiple versions in advance, distributes them close to users, and lets the client choose the best version for the current network.
