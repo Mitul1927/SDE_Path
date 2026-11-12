@@ -1,0 +1,350 @@
+Phase 1: Redis Fundamentals
+
+1. What is Redis?
+	Redis (Remote Dictionary Server) is an open-source, in-memory data structure store that can be used as:
+		- A database
+		- A cache
+		- A message broker
+		- A streaming engine
+	
+	Redis stores data primarily in RAM (Random Access Memory), which allows it to perform operations extremely quickly.
+	It Supports multiple Data-Structures
+		Data structure			Example use case
+		
+		Strings				Caching API responses
+		Lists				Task queues
+		Sets				Unique users
+		Sorted Sets			Leaderboards
+		Hashes				User profiles
+		Streams				Event processing
+		
+	For example - 
+		Without Redis Every request may require a database query.
+		Now introduce Redis then it checks Is the device information already cached? then Cache HIT or Cache MISS
+	
+	This is one of Redis's most common use cases: avoiding repeated database queries.
+	
+	Redis is an open-source, in-memory data structure store that supports multiple data types and is commonly used as a cache, database, and message broker. It provides low-latency data access by keeping frequently accessed data in memory.
+	
+
+
+2. Why is Redis used?
+	The biggest reason is low latency. Consider an application receiving 10,000 requests for the same device information. Without caching, PostgreSQL may repeatedly execute the same query. With Redis, the backend can retrieve previously cached data instead.
+	
+	Major Use Cases:
+		Use case				How Redis helps
+		
+		Caching					Stores frequently accessed data
+		Session management			Stores user session information
+		Rate limiting				Tracks request counts
+		Leaderboards				Uses sorted sets for rankings
+		Real-time analytics			Performs fast counter operations
+		Distributed locking			Coordinates access across services
+		Message processing			Supports Pub/Sub and Streams
+		
+	Real-world examples
+		- Instagram: caching frequently accessed data.
+		- E-commerce: storing shopping cart information.
+		- Gaming: maintaining player leaderboards.
+		- Banking applications: rate limiting and temporary data storage.
+		- Authentication systems: session and token-related data.
+	
+	Important: Redis doesn't automatically make your entire application faster. It helps when you choose the right data to store and avoid unnecessary expensive operations.
+	
+3. Redis vs PostgreSQL / MySQL
+	Redis - In-memory Data Structure store
+	PostgreSQL - Relational Database
+	
+		Feature			Redis					PostgreSQL
+		
+		Primary storage		RAM					Disk-backed
+		Data model		Data structures				Relational tables
+		Query language		Redis commands				SQL
+		Relationships		No traditional joins			Supports joins
+		Transactions		Supported, with different semantics	ACID transactions
+		Persistence		Optional/configurable, supported	Durable by design
+		Typical latency		Very low				Generally higher
+		Best suited for		Caching, fast data access		Persistent relational data
+		
+	Example
+		Suppose DeviceMax has 1 million devices. PostgreSQL stores the actual device records and Redis can store a frequently accessed device record.
+	
+	The important architectural idea:
+		- PostgreSQL is your source of truth.
+		- Redis is often your fast-access layer.
+	
+	Then Why not store everything in Redis?
+		Because RAM is more expensive and limited than disk storage, and Redis does not provide the same relational querying and constraints as PostgreSQL. Redis also requires deliberate persistence and memory-management decisions.
+	
+4. Why is Redis so fast?
+	There are four major reasons.
+		Reason 1: In-memory storage
+			Redis primarily keeps its working dataset in RAM.
+			Why is RAM faster?
+				- RAM is directly addressable by the CPU.
+				- Disk access involves storage I/O.
+				- SSDs have much higher access latency than RAM.
+				- Redis avoids repeatedly reading the primary dataset from disk.
+			
+			Illustration:
+				Storage			Approximate access latency
+				
+				CPU cache		Nanoseconds
+				RAM			Tens to hundreds of nanoseconds
+				SSD			Tens to hundreds of microseconds
+			These are not guaranteed benchmarks
+		
+		Reason 2: Efficient data structures
+			Redis uses efficient implementations of data structures.
+
+			For example:
+				- Hash tables for many key lookups.
+				- Sorted sets for ordered ranking operations.
+				- Lists for sequence-based operations.
+			A Redis GET typically has average O(1) lookup complexity.
+
+			That means the lookup time does not normally grow linearly with the number of keys.
+		
+		Reason 3: Single-threaded command execution
+			Redis processes ordinary commands sequentially within its main execution thread.
+			This avoids many complications associated with multiple threads modifying shared data simultaneously.
+			We'll explore this properly in point 8.
+		
+		Reason 4: Efficient networking
+			Redis uses I/O multiplexing to handle many client connections efficiently.
+			Instead of dedicating a separate thread to every connected client, Redis can monitor multiple connections and process ready events.
+
+5. What is an In-Memory Database?
+	An in-memory database is a database that stores its working dataset primarily in RAM instead of relying on disk as its primary storage medium.
+	
+	Traditional disk-based database
+		Imagine PostgreSQL:
+			1. Your application sends a query.
+			2. PostgreSQL checks its shared buffers and operating-system cache.
+			3. If the required data isn't cached, it reads the relevant pages from disk.
+			4. It processes the query.
+			5. It returns the result.
+			
+		An important point: PostgreSQL doesn't read from disk for every query. It also uses RAM extensively through its buffer cache.
+		
+	In-memory database
+		With Redis:
+			1. Your application sends a command.
+			2. Redis looks up the requested key in its in-memory dataset.
+			3. It executes the operation.
+			4. It returns the result.
+	
+	There is no need to read the primary dataset from disk for every normal lookup.
+	
+	Why is RAM faster than disk?
+		Think of RAM as your study table and disk as your bookshelf.
+			- RAM: Your frequently used books are already on your table.
+			- Disk: You need to get up, find a book on the shelf, and bring it back.
+	
+	The computer version is even more dramatic because storage I/O has substantially higher latency than RAM access.
+	
+	Does RAM lose data?
+		Yes. Traditional RAM is volatile. If power disappears, its contents are lost. This creates an important question: If Redis stores data in RAM, what happens when the server restarts?
+		
+		Redis supports persistence mechanisms.
+		Two important mechanisms are:
+			Mechanism		Meaning
+			
+			RDB			Takes point-in-time snapshots of the dataset
+			AOF			Logs write operations so they can be replayed
+			
+		So, Redis is in-memory, but it is not necessarily volatile-only. It can persist data to disk.
+		
+6. Redis Architecture
+	Redis follows a client-server architecture.
+	There are three major components to understand.
+		A. Redis Client
+			The client is the application communicating with Redis.
+			Examples:
+				- Java application
+				- Node.js application
+				- Python application
+				- Redis CLI
+				
+			For example, your Java backend connects to Redis and sends: SET user:101 "John"
+			
+		B. Redis Server
+			The Redis server receives commands and executes them.
+
+			Its responsibilities include:
+				- Accepting client connections.
+				- Reading client commands.
+				- Executing commands.
+				- Managing keys and data structures.
+				- Returning responses.
+				- Handling expiration and persistence-related work.
+		C. Redis Memory
+			This is where Redis maintains its primary in-memory dataset.
+			Example:
+				key		value
+				
+				user:101 	John
+				user:102	Jane
+			
+			This is a simplified illustration. Redis values can be strings, hashes, lists, sets, sorted sets, streams, and other supported structures.
+			
+7. Redis Key-Value Storage
+	Let's understand the fundamental storage model.
+	Redis stores data using keys and associated values.
+		for example - SET username "john", GET username
+			output - "john"
+		here - username is the key and john is the value.
+		
+		more examples - SET user:101:name "John", SET user:101:age "25", SET user:101:city "Delhi"
+		Redis now stores three different keys. Notice something important: user:101:name is not a nested object. The colon is simply part of the key name. It is a naming convention.
+		
+	Can Redis store complex data?
+		Absolutely. Redis supports multiple data structures. 
+			For example, a user profile can be stored as a Hash: HSET user:101 name "John" age 25 city "Delhi".
+			Retrieve the entire Hash: HGETALL user:101
+			Example output:
+				1) "name"
+				2) "John"
+				3) "age"
+				4) "25"
+				5) "city"
+				6) "Delhi"
+		
+		Why is this useful?
+			You can retrieve or update individual fields without replacing the entire structure.
+			
+		In production applications, meaningful key names are important. for e.g - user:101, device:101, rate_limit:user:101.
+		
+8. Single-Threaded Command Execution and I/O Multiplexing
+	8.1 Is Redis single-threaded?
+			Historically, Redis became famous for its single-threaded command execution model.
+			This means the main Redis command execution thread processes commands sequentially.
+
+			Imagine three clients:
+				- Client A sends SET user:1 "John".
+				- Client B sends GET user:1.
+				- Client C sends SET user:2 "Mike".
+			The main command execution thread processes commands one at a time.
+			
+			Simplified command execution
+				ClientA | ClientB | ClientC -> Redis event loop (Receives and schedules ready client commands) -> Main Command execution thread (1. Execute ClientA command 2. Execute ClientB command 3. Execute ClientC command.
+				
+			The key idea is sequential command execution, not that Redis can only accept one client.
+			
+			Why use a single execution thread?
+				Imagine multiple threads modifying the same shared data.
+
+				Thread A updates a value while Thread B simultaneously updates it.
+
+				Now you need to manage:
+					- Locks
+					- Synchronization
+					- Race conditions
+					- Thread coordination
+				Redis avoids much of this complexity for ordinary command execution by processing commands sequentially.
+
+				It also reduces synchronization overhead.
+				For example: INCR page_views, This is an atomic command.
+				You don't need to implement your own Java synchronization around Redis's INCR operation.
+				
+				Important: A single command being atomic does not automatically make a sequence of multiple commands atomic.
+				
+	8.2 Does Redis support multiple clients simultaneously?
+		Yes!
+		Redis can maintain thousands of client connections simultaneously, subject to its configuration and available resources.
+		But how can one execution thread manage so many clients?
+		That's where I/O multiplexing comes in.
+		
+	8.3 What is I/O Multiplexing?
+		I/O means Input/Output.
+
+		Examples:
+			- Receiving data from clients.
+			- Sending data to clients.
+			- Reading network sockets.
+		Multiplexing means handling multiple I/O connections through a common mechanism.
+
+		Imagine you are a waiter in a restaurant.
+
+		You have five tables.
+
+		Instead of standing beside one table until the customer finishes eating, you:
+			1. Check which table needs attention.
+			2. Take that table's order.
+			3. Move to another table.
+			4. Continue checking all tables.
+			5. Serve whichever table is ready.
+		
+		This is conceptually similar to I/O multiplexing.
+
+		Redis uses operating-system mechanisms such as:
+			- epoll on Linux.
+			- kqueue on BSD/macOS.
+			- Other platform-specific event notification mechanisms.
+			
+		These mechanisms notify Redis when a socket is ready for reading or writing.
+		
+		How does it work?
+			Suppose 1,000 clients are connected.
+				1. Redis monitors their network connections.
+				2. The operating system reports which connections have data ready.
+				3. Redis processes the ready events.
+				4. It reads commands and executes them.
+				5. It sends responses back.
+			Redis does not need 1,000 execution threads just because 1,000 clients are connected.
+			
+		Important distinction
+			Concept				Meaning
+			
+			Concurrency			Managing multiple tasks over overlapping periods
+			Parallelism			Actually executing tasks simultaneously
+			I/O multiplexing		Monitoring multiple I/O connections efficiently
+			Single-threaded execution	Processing commands sequentially on one main execution thread
+			
+	8.4 Is Redis completely single-threaded?
+		No. This is an important interview trap.
+		Modern Redis uses additional threads for certain work.
+
+		For example:
+			- Background persistence operations.
+			- Background memory cleanup.
+			- Some networking I/O operations, depending on configuration and Redis version.
+		Redis 6 introduced optional threaded I/O to improve networking performance.
+
+		However, the main command execution model remains predominantly single-threaded.
+		
+		So is redis single-threaded?
+			Redis uses a predominantly single-threaded command execution model. Its main execution thread processes commands sequentially, while I/O multiplexing allows it to handle multiple client connections efficiently. However, modern Redis versions also use additional threads for certain background and I/O operations.
+			
+
+What happens when Redis runs out of memory?
+	Redis uses a configuration called: maxmemory
+	This controls the maximum memory Redis is allowed to use for its dataset and related accounting.
+	When the configured limit is reached, Redis applies its configured eviction policy.
+	What is eviction?
+		Eviction means removing existing keys to make room for new data.
+		Redis supports several eviction policies.
+			Policy			Meaning
+			
+			noeviction		Don't remove existing keys; reject writes that need additional memory
+			allkeys-lru		Evict least recently used keys from all keys
+			allkeys-lfu		Evict least frequently used keys from all keys
+			volatile-lru		Evict least recently used keys that have an expiry
+			volatile-lfu		Evict least frequently used keys that have an expiry
+			allkeys-random		Evict random keys
+			volatile-random		Evict random keys that have an expiry
+			volatile-ttl		Evict keys with the shortest remaining TTL
+		
+		Two concepts worth remembering:
+			- LRU: Least Recently Used.
+			- LFU: Least Frequently Used.
+			
+	
+	if there's no eviction policy then no new data is inserted.
+	
+	How do we configure it?
+		CONFIG SET maxmemory 2gb
+		CONFIG SET maxmemory-policy allkeys-lru
+		
+	
+	When Redis reaches its configured maxmemory limit, it applies the configured eviction policy. Depending on the policy, it may remove existing keys to free memory. If noeviction is configured, Redis rejects write commands that require additional memory instead of evicting keys.
