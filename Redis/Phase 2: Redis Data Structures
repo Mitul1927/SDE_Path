@@ -1,0 +1,390 @@
+Phase 2: Redis Data Structures
+
+Choosing the correct Redis data structure is more important than memorising Redis commands.
+
+for example:
+	Store authentication tokens → Strings.
+	Maintain pending device jobs → Lists.
+	Maintain unique online users → Sets.
+	Store user profile information → Hashes.
+	Rank devices by performance score → Sorted Sets.
+	
+1. Redis Strings
+	1.1 What is a String in Redis?
+		A Redis String is a key-value data type that stores a sequence of bytes.
+
+		It can store:
+			- Text
+			- Numbers
+			- JSON strings
+			- Serialized objects
+			- Binary data
+		Unlike Java's String, Redis Strings aren't restricted to textual characters.
+		
+		A Redis String can store up to 512 MB of data.
+		Basic example:
+			SET username "john"
+			GET username
+		
+		Output:
+			john
+		Here:
+			- username is the key.
+			- john is the value.
+		
+		Think of it as a dictionary:
+			Map<String, String> redis = new HashMap<>();
+
+			redis.put("username", "john");
+			System.out.println(redis.get("username"));
+		
+		Conceptually, that's what you're doing, although Redis is a separate server and supports much more than a Java HashMap.
+	
+	1.2 Important String commands
+		A. SET
+			Stores a value against a key.
+			SET username "john"
+			If the key already exists, its previous value is overwritten.
+		B. GET
+			Retrieves a value.
+			GET username
+			If the key doesn't exist, Redis returns nil.
+		C. MSET
+			Sets multiple key-value pairs in a single command.
+			MSET name "John" age 25 city "Delhi"
+			Retrieve them individually: GET name, GET age, GET city.
+		D. MGET
+			Retrieves multiple values in a single command.
+			MGET name age city
+			Output:
+				1) "John"
+				2) "25"
+				3) "Delhi"
+		
+			Interview point: MGET reduces the number of network round trips compared with issuing separate GET commands.
+		E. INCR
+			Increments a numeric value by 1.
+			cli - SET age 25, INCR age, GET age
+			Output - 26
+		F. DECR
+			Decrements a numeric value by 1.
+		G. INCRBY and DECRBY
+			Increment or decrement by a specified amount.
+			cli - INCRBY page_views 10, DECRBY page_views 5
+			
+			These are extremely useful for counters.
+			For example:
+				- API request counters.
+				- Page views.
+				- Login attempts.
+				- Product inventory counters.
+		H. DEL
+			Deletes one or more keys.
+			DEL username
+			You can also delete multiple keys: DEL name age city
+		I. EXISTS
+			Checks whether a key exists.
+			EXISTS username
+			Output - 1
+			1 means the key exists, while 0 means it doesn't.
+		J. SETEX / SET with expiration
+			Suppose you're implementing OTP authentication.
+			An OTP should expire after 60 seconds.
+			cli - SETEX otp:101 60 "123456"
+			This means:
+				- Key: otp:101
+				- Expiration: 60 seconds
+				- Value: 123456
+			
+			Modern Redis also supports:
+				SET otp:101 "123456" EX 60
+				SET otp:101 "123456" PX 60000
+			
+			EX specifies seconds, while PX specifies milliseconds.
+				
+				Option			Meaning
+				
+				EX			Expiration in seconds
+				PX			Expiration in milliseconds
+				NX			Set only if key doesn't exist
+				XX			Set only if key already exists
+			
+			example - SET session:101 "active" EX 3600 NX
+			This creates the key only if it doesn't already exist, with a one-hour expiry.
+			
+	1.3 Real-world example: API rate limiter
+		Imagine your backend allows each user 100 API requests per minute.
+		We can use Redis Strings with expiration -> SET rate:user:101 1 EX 60 NX, If the key already exists -> INCR rate:user:101, Then retrieve the counter -> GET rate:user:101.
+		If the counter exceeds 100, reject the request.
+
+2. Redis Lists
+	2.1 What is a Redis List?
+		A Redis List is an ordered collection of strings. It allows you to insert and remove elements from both ends. Think of a queue or a list of pending tasks.
+		e.g - tasks = ["task1", "task2", "task3"]
+	
+	2.2 Important List commands
+		A. LPUSH
+			Inserts elements at the beginning (left side). e.g  - LPUSH tasks "task1"
+		B. RPUSH
+			Inserts elements at the end (right side). e.g - RPUSH tasks "task4"
+			result - ["task3", "task2", "task1", "task4", "task5"]
+		C. LRANGE
+			Retrieves elements within an index range. e.g - LRANGE tasks 0 -1. Here - 0 = starting index and -1  = last element.
+			Get only the first three elements: LRANGE tasks 0 2
+		D. LPOP
+			Removes and returns an element from the beginning. e.g - LPOP tasks
+		E. RPOP
+			Removes and returns an element from the end. e.g - RPOP tasks
+		F. LLEN
+			Returns the number of elements. e.g - LLEN tasks
+	
+	2.3 LPUSH vs RPUSH
+		Command		Behaviour
+		
+		LPUSH		Inserts at the beginning
+		RPUSH		Inserts at the end
+		LPOP		Removes from the beginning
+		RPOP		Removes from the end
+	
+	2.4 Use case: Task Queue
+		Imagine Backend needs to process some update jobs. your application receives three tasks: lpush f:queue "device01", lpush f:queue "device02", lpush f:queue "device03".
+		A worker retrieve tasks using - RPOP f:queue
+		This gives you FIFO (First In, First Out) behaviour with this particular combination of LPUSH and RPOP.
+		
+		Production Consideration - Plain RPOP removes a task immediately. If the worker crashes after removing it but before processing it, that task can be lost.
+		For reliable queues, consider BLMOVE with a processing list, or Redis Streams with consumer groups and acknowledgements.
+		Also learn BLPOP and BRPOP later. These commands allow workers to block while waiting for tasks instead of continuously polling Redis.
+		
+3. Redis Sets
+	3.1 What is a Redis Set?
+		A Redis Set is an unordered collection of unique strings. The important word is unique. A Set does not allow duplicate members.
+		e.g - SADD users "john", SADD users "jane", SADD users "john". The third command doesn't create another John. The Set contains - john and jane.
+		Unlike Lists:
+			- Sets don't preserve insertion order.
+			- Sets don't allow duplicate members.
+			- Membership checks are generally O(1).
+		
+	3.2 Important Set commands
+		A. SADD
+			Adds members to a Set. SADD users "john" "alex" "mike"
+		B. SMEMBERS
+			returns all memebers. SMEMBERS users. Remember that the returned order is not guaranteed.
+		C. SISMEMBER
+			Checks whether a member exists. SISMEMBER users "john"
+			returns - (integer) 1
+		D. SREM
+			removes a member. SREM users "john"
+		E. SUNION
+			Returns the union of two Sets. e.g -suppose -  SADD group:A "john" "alex", SADD group:B "alex" "mike". just execute - SUNION group:A group:B.
+			it will give the result of both sets. Duplicates are automatically removed.
+		F. SINTER
+			Returns the intersection of two Sets. e.g - SINTER group:A group:B,  result - alex. This finds common members.
+		G. SDIFF
+			SDIFF group:A group:B  Returns members present in A but not B.
+	
+	3.3 Real-world use case: Unique online users
+		Imagine you want to track currently online users in your App.
+			SADD online:users "user:101"
+			SADD online:users "user:102"
+			SADD online:users "user:103"
+		Check whether a user is online: SISMEMBER online:users "user:101"
+		Remove a user when they go offline: SREM online:users "user:101"
+		
+		Another interesting use case: Common followers
+			Suppose:
+				SADD user:101:followers "user:201" "user:202" "user:203"
+				SADD user:102:followers "user:202" "user:203" "user:204"
+			Find mutual followers:
+				SINTER user:101:followers user:102:followers
+			
+4. Redis Hashes
+	4.1 What is a Redis Hash?
+		A Redis Hash is a data structure that stores multiple field-value pairs under a single key.
+		Think of it as a Java HashMap inside another HashMap.
+		for e.g -
+			Map<String, String> user = new HashMap<>();
+
+			user.put("name", "John");
+			user.put("age", "25");
+			user.put("city", "Delhi");
+		
+		Redis representation:
+			Key: user:101
+
+			Fields:
+			    name  -> John
+			    age   -> 25
+			    city  -> Delhi
+		
+		The difference between a Redis Hash and a normal Redis String is that a Hash contains multiple fields.
+	
+	4.2 Important Hash commands
+		A. HSET
+			Creates or updates fields. e.g - HSET user:101 name "John" age 25 city "Delhi"
+			You can also update an individual field: HSET user:101 city "Mumbai"
+		B. HGET
+			Retrieves one field. e.g - HGET user:101 name
+			Output - John
+		C. HGETALL
+			Retrieves all fields and values. e.g - HGETALL user:101
+		D. HMGET
+			Retrieves multiple specific fields. e.g - HMGET user:101 name age
+		E. HDEL
+			Deletes one or more fields. e.g - HDEL user:101 city
+			Notice that this deletes the city field, not the entire user:101 key.
+		F. HEXISTS
+			Checks whether a field exists. e.g - HEXISTS user:101 name
+			Returns 1 if the field exists, otherwise 0.
+		G. HINCRBY
+			Increments a numeric field. e.g - HINCRBY user:101 age 1
+			If the age was 25, it becomes 26.
+		H. HLEN
+			Returns the number of fields in a Hash. e.g - HLEN user:101
+	
+	4.3 Redis Hash vs Redis String
+		Suppose you want to store user information.
+		Approach 1: Using Strings
+			SET user:101 '{"name":"John","age":25,"city":"Delhi"}'
+			You are storing the entire JSON object as one String.
+			If you want to update the city, you generally need to read, modify, and rewrite the JSON value, unless you use an additional JSON module 
+			or application-side strategy.
+		
+		Approach 2: Using Hashes
+			HSET user:101 name "John" age 25 city "Delhi"
+			Update only the city: HSET user:101 city "Mumbai"
+			Retrieve only the name: HGET user:101 name
+			
+		Comparison
+			Feature				Redis String				Redis Hash
+			
+			Storage				One value per key			Multiple field-value pairs
+			Updating one field		Usually replace or rewrite value	Update individual field
+			Retrieving one field		Requires parsing structured content	HGET
+			Best for			Tokens, JSON blobs, counters		Structured objects
+			Example				user:101 → JSON				user:101 → fields
+			
+		
+		Redis Strings store a single value against a key, whereas Redis Hashes store multiple field-value pairs within one key. 
+		Hashes are useful for structured objects such as user profiles because individual fields can be accessed and updated independently.
+	
+	4.4 Real-world use case: user profile
+		Imagine your application has this user:
+			user_id = 101
+			name = John
+			email = john@example.com
+			role = ADMIN
+			status = ACTIVE
+		Store it in Redis: HSET user:101 name "John" email "john@example.com" role "ADMIN" status "ACTIVE"
+		When the user logs in: HGETALL user:101
+		When their role changes: HSET user:101 role "SUPER_ADMIN"
+		
+		Redis Hashes are useful for relatively small structured objects. They are not a replacement for PostgreSQL tables, foreign keys, or relational queries.
+		
+5. Redis Sorted Sets (ZSET)
+	Remember: Redis ranks start at zero, not one.
+	This is one of Redis's most powerful data structures.
+	5.1 What is a Sorted Set?
+		A Sorted Set stores unique members, each associated with a numerical score.
+		Unlike a normal Set, members are automatically ordered by their scores.
+		For example: john  -> 100, alex  -> 200, mike  -> 150
+		Redis sorts members according to their scores: 1.) alex 2.) mike 3.) john
+		Important characteristics:
+			1. Every member must be unique.
+			2. Every member has an associated score.
+			3. Members are ordered by score.
+			4. If two members have the same score, Redis orders them lexicographically by member.
+	
+	5.2 Important Sorted Set commands
+		A. ZADD
+			Adds a member with a score. e.g - ZADD leaderboard 100 "john", ZADD leaderboard 200 "alex", ZADD leaderboard 150 "mike"
+			You can insert multiple members in one command: ZADD leaderboard 100 "john" 200 "alex" 150 "mike"
+			If a member already exists, its score is updated. ZADD leaderboard 250 "john"
+			John's score changes from 100 to 250.
+		B. ZRANGE
+			Returns members in ascending score order. e.g - ZRANGE leaderboard 0 -1
+			output - 	
+				1. mike 2. alex 3. john
+			Retrieve scores too:
+				ZRANGE leaderboard 0 -1 WITHSCORES
+		C. ZREVRANGE
+			Returns members in descending score order. e.g - ZREVRANGE leaderboard 0 -1 WITHSCORES
+			Output: john 250, alex 200, mike 150
+		D. ZRANK
+			Returns a member's zero-based rank in ascending order. e.g - ZRANK leaderboard "john"
+			John is last in ascending order, so the result is 2.
+		E. ZREVRANK
+			Returns a member's zero-based rank in descending order. e.g - ZREVRANK leaderboard "john"
+			John is first, so the result is 0.
+		F. ZREM
+			Removes a member. e.g - ZREM leaderboard "mike"
+		G. ZSCORE
+			Returns the score associated with a member. e.g - ZSCORE leaderboard "john"
+		H. ZINCRBY
+			Increments a member's score. e.g - ZINCRBY leaderboard 50 "john"
+			If John had 250 points, he now has 300.
+		I. ZCARD
+			Returns the number of members. e.g - ZCARD leaderboard
+			
+	5.3 Why are Sorted Sets so useful?
+		Imagine you're building a gaming application. You have 1 million players. Every player has a score.
+		You need to:
+			- Update a player's score.
+			- Get the top 10 players.
+			- Find a player's ranking.
+			- Find players between ranks 100 and 200.
+		Using PostgreSQL, you might execute queries involving sorting and indexing.
+		Redis Sorted Sets are specifically designed for this kind of operation.
+		Typical time complexities:
+			Operation		Complexity
+			
+			ZADD			O(log N) per member
+			ZREM			O(log N) per member
+			ZSCORE			O(1)
+			ZRANK			O(log N)
+			ZREVRANK		O(log N)
+			ZRANGE			O(log N + M)
+			
+			Where:
+				- N = number of members.
+				- M = number of elements returned.
+
+6. Questions
+	Q1. What are the different Redis data types?
+	Q2. Redis List vs Redis Set?
+		Redis Lists are ordered collections that allow duplicate elements, whereas Redis Sets are unordered collections that store only unique elements. I would use Lists for queues and ordered collections, and Sets for maintaining unique users, tags, or followers.
+	Q3. Redis Hash vs String?
+	Q4. When would you use Sorted Sets?
+		I would use Sorted Sets whenever I need unique elements maintained in an ordered ranking based on numerical scores.
+		
+7. Important Time Complexity Cheat Sheet
+
+	Data 		type		Command	Time complexity
+	
+	String		GET		O(1)
+	String		SET		O(1)
+	String		INCR		O(1)
+	String		MGET		O(N)
+	List		LPUSH		O(1) per element
+	List		RPUSH		O(1) per element
+	List		LPOP		O(1)
+	List		RPOP		O(1)
+	List		LRANGE		O(S+N)
+	List		LLEN		O(1)
+	Set		SADD		O(1) per member, average
+	Set		SREM		O(1) per member, average
+	Set		SISMEMBER	O(1) average
+	Set		SMEMBERS	O(N)
+	Set		SINTER		Depends on set sizes
+	Hash		HSET		O(1) per field, average
+	Hash		HGET		O(1) average
+	Hash		HGETALL		O(N)
+	Hash		HDEL		O(1) per field, average
+	Sorted Set	ZADD		O(log N) per member
+	Sorted Set	ZREM		O(log N) per member
+	Sorted Set	ZSCORE		O(1)
+	Sorted Set	ZRANK		O(log N)
+	Sorted Set	ZRANGE		O(log N + M)
+
+	Here, N generally represents the collection size and M the number of returned elements, depending on the operation.
+	
+Maybe next: TTL, eviction policies, RDB, AOF, and what happens when Redis restarts or crashes.
