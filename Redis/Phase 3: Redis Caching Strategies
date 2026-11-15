@@ -1,0 +1,432 @@
+Phase 3: Redis Caching Strategies
+
+Now we're going to understand how backend applications use Redis to reduce database load, improve response times, and handle large amounts of traffic.
+One important thing: Caching is easy to implement. Keeping cached data correct is the difficult part.
+
+1. What is Caching?
+	Imagine Application has 10,000 users.
+	Every time someone opens the dashboard, your Java backend executes: SELECT * FROM Users WHERE id = 101;
+	Suppose 500 users from the same company open the dashboard within a short period. Your PostgreSQL database may execute essentially the same query hundreds of times.
+	That's unnecessary work. Caching solves this problem by storing frequently accessed data in a faster storage layer so that subsequent requests can reuse it.
+	
+	1.1 Cache Hit vs Cache Miss
+		Cache Hit: The requested data is available in Redis. Redis returns the cached value. No PostgreSQL query is needed.
+		Cache Miss: The requested data isn't available in Redis. Your backend fetches the data from PostgreSQL and usually stores it in Redis for future requests.
+		
+	1.2 Why do we need caching?
+		There are four major reasons:
+			1. Reduce database load: Avoid repeated queries.
+			2. Improve response time: Return frequently requested data faster.
+			3. Improve scalability: Handle more application requests without proportionally increasing database workload.
+			4. Reduce infrastructure costs: Reduce expensive database operations and resource consumption.
+	
+		But remember: caching introduces another copy of your data.
+		That means you now have a consistency problem to solve.
+		
+2. Caching Strategies
+	There are four major caching strategies you need to understand.
+		1. Cache Aside
+		2. Read Through
+		3. Write Through
+		4. Write Behind (Write Back)
+		
+	2.1 Cache Aside (Lazy Loading)
+		In Cache Aside, the application itself manages the cache. 
+		The application checks Redis first. If the data isn't available, it fetches the data from PostgreSQL and then populates Redis.
+		What happens when the device information changes? Suppose the device status changes from online to offline. Your application updates PostgreSQL 
+		Then it deletes the cached entry: The next request will fetch the latest database value and repopulate Redis.
+		
+		Advantages
+			Only frequently accessed data gets cached.
+			Application controls the caching logic.
+			
+		Disadvantages
+			Cached data can become stale.
+			Application needs to manage invalidation.
+		
+		Cache Aside is a caching strategy where the application checks Redis before querying the database. If the data exists, it returns the cached value. Otherwise, it fetches data from the database, stores it in Redis, and returns it. The application also manages cache invalidation when data changes.
+		
+	2.2 Read Through Cache
+		In Read Through, the cache layer itself is responsible for loading data from the database when a cache miss occurs.
+		The application talks to the cache, and the cache handles retrieving missing data from the underlying database.
+		
+		Cache Aside vs Read Through
+			Cache Aside					Read Through
+			
+			Application checks cache			Application requests data from cache
+			Application queries DB on miss			Cache layer loads from DB on miss
+			Application populates cache			Cache layer populates cache
+			Application manages loading logic		Cache abstraction manages loading logic
+		
+		Does Redis automatically support Read Through? 
+			Not by itself. Redis is a data store. It doesn't automatically know how to query PostgreSQL when a key is missing.
+			You need an additional caching abstraction, library, proxy, or application-managed loader to implement this pattern.
+			
+		In Read Through caching, the application requests data from the cache. If the data is missing, the cache layer automatically loads it from the underlying database, stores it, and returns it to the application. The main difference from Cache Aside is that the cache layer, rather than the application, manages the loading process.
+		
+	2.3 Write Through Cache
+		In the previous strategies, we primarily focused on reading data.
+		Write Through focuses on writing data.
+		In Write Through, every write operation updates both:
+			1. The cache.
+			2. The underlying database.
+		The application writes through the caching layer.
+		
+		How does it work?
+			Suppose a device's status changes from online to offline.
+			Example: Suppose we want to update device 101 then The cache is updated too. Now subsequent reads can retrieve the updated value from Redis.
+			
+		Advantages
+			Subsequent reads can use the latest cached value.
+			Reduces cache misses after updates.
+		
+		Disadvantages
+			Every write involves cache and database work.
+			Partial failures can cause inconsistency.
+		
+		For example:
+			1. PostgreSQL update succeeds.
+			2. Redis update fails.
+			3. Redis still contains the old value.
+			
+		Write Through is a caching strategy where every write operation updates both the cache and the underlying database. This helps keep cached data up to date, but it increases write overhead and requires handling failures between the two systems.
+		
+	2.4 Write Behind (Write Back)
+		In Write Behind, the application writes data to the cache first. The cache acknowledges the write, and the database update happens asynchronously, later.
+		Example 
+			Imagine your application tracks millions of page views. Instead of writing every page view immediately to PostgreSQL, you increment counters in Redis.
+			INCR page_views:homepage
+			A background worker periodically reads accumulated data and persists it to PostgreSQL. This can reduce database write pressure.
+		
+		However, a production implementation needs a reliable mechanism to transfer those updates. 
+		Simply reading and resetting a Redis counter is not sufficient because failures can cause lost updates.
+		You might use Redis Streams, a durable event queue, or another reliable write pipeline.
+		
+		Advantages
+			Reduces immediate database write load.
+			Can batch multiple database writes.
+			Useful for high-volume counters and analytics.
+		
+		Disadvantages
+			Database can temporarily contain stale data.
+			Data can be lost if writes aren't durably captured.
+			
+		Write Behind, also called Write Back, is a strategy where writes are first stored in the cache and propagated to the database asynchronously. It improves write performance and can reduce database load, but introduces eventual consistency and risks of data loss if the write pipeline is not reliable.
+		
+	2.5 All four strategies compared
+		Strategy		Who loads data?				Write behaviour
+		
+		Cache Aside		Application				Application updates DB and invalidates cache
+		Read Through		Cache layer				Not defined by the read strategy
+		Write Through		Cache layer / abstraction		Cache and DB updated synchronously
+		Write Behind		Cache layer / abstraction		Cache updated first, DB asynchronously
+		
+		Read Through and Write Through are not necessarily mutually exclusive.
+		A caching system can implement both:
+			- Read Through for loading missing values.
+			- Write Through for synchronously propagating updates.
+			
+3. Cache Expiration
+	Now imagine Redis contains millions of keys. Some cached information may no longer be useful after a certain amount of time.
+	For example:
+		- OTP: valid for 60 seconds.
+		- Login session: valid for 30 minutes.
+		- Device status: valid for 30 seconds.
+		- Company settings: valid for 10 minutes.
+	
+	We need a mechanism to automatically expire cached data. That's where TTL comes in.
+	
+	3.1 What is TTL?
+		TTL stands for Time To Live. It defines how long a key should remain available before it expires.
+		
+		expiration commands
+			Command			Purpose
+			
+			EXPIRE			Set expiration in seconds
+			PEXPIRE			Set expiration in milliseconds
+			EXPIREAT		Set expiration at a Unix timestamp
+			TTL			Get remaining lifetime in seconds
+			PTTL			Get remaining lifetime in milliseconds
+			PERSIST			Remove expiration from a key
+			SETEX			Set a value with expiration
+			SET ... EX		Set a value with expiration
+			
+	3.2 What happens when a cache expires?
+		the key expires. when key expires Your application experiences a cache miss.
+		In Cache Aside, the application queries PostgreSQL and repopulates Redis.
+		Expiration does not automatically update or delete the corresponding PostgreSQL record. It only removes the Redis key.
+		
+	3.3 How does Redis expire keys internally?
+		Redis uses two expiration mechanisms:
+			1. Passive expiration
+				when a client accesses a key, Redis checks whether its expiration time has passed. If it has, Redis treats the key as expired and removes it.
+			2. Active expiration
+				Redis periodically samples keys that have expiration times and removes expired ones.
+			
+			Why both?
+				Because Redis shouldn't need to scan every expiring key continuously. That would waste resources.
+				
+4. Cache Invalidation
+	Cache invalidation means removing or updating cached data when the underlying source data changes.
+	so your application doesn't returns stale data when something is updated in db but not in redis.
+	
+	Three common invalidation approaches
+		Approach 1: Delete the cache after a database update. The next request fetches fresh data.
+		Approach 2: Update the cache. After successfully updating PostgreSQL: update the redis
+		Approach 3: Use TTL. Set a short expiration: This limits how long stale information can remain, although it doesn't guarantee immediate consistency.
+		
+	Which approach is best?
+		For a typical PostgreSQL + Redis application using Cache Aside, a common starting point is:
+			1. Update PostgreSQL.
+			2. Commit the transaction.
+			3. Delete the corresponding Redis key.
+			4. Let the next read repopulate the cache.
+		
+		However, this still has a race condition.
+			Imagine:
+				1. Request A reads the old database value.
+				2. Request B updates PostgreSQL and deletes the cache.
+				3. Request A writes its old value into Redis.
+			Now the stale value is back.
+			For high-concurrency systems, you may need version checks, locks, or an event-driven invalidation mechanism.
+			
+	Cache Invalidation vs Cache Expiration	
+		Cache Invalidation						Cache Expiration
+		
+		Cache is removed or updated because data changes		Cache is removed because its TTL ends
+		Usually triggered by an application event			Triggered by time
+		Can happen immediately						Happens after configured lifetime
+		Helps maintain consistency					Limits how long data remains cached
+		
+		
+	Cache invalidation is the process of removing or updating cached data when the underlying database changes. It prevents applications from returning stale information. Common techniques include deleting the cache after a database update, updating the cached value, and using TTL as a safety mechanism.
+	
+5. Redis Cache Eviction Policies
+	5.1 What is eviction?
+		Eviction means removing existing keys from Redis when memory pressure reaches the configured maxmemory limit.
+		Configure the memory limit: CONFIG SET maxmemory 2gb
+		Configure the eviction policy: CONFIG SET maxmemory-policy allkeys-lru
+		Now Redis uses the configured policy to decide which keys to remove when necessary.
+	
+	5.2 Important eviction policies
+		five policies
+		A. noeviction
+			Redis does not automatically remove existing keys. When the memory limit is reached, commands that require additional memory are rejected.
+			Use case: When you don't want Redis to silently delete existing keys and would rather reject new writes.
+		B. allkeys-lru
+			LRU stands for Least Recently Used. Redis can evict any key, regardless of whether it has an expiration time.
+			It prefers keys that haven't been accessed recently.
+		C. volatile-lru
+			This also uses LRU, but there is one major difference. Redis only considers keys that have an expiration time.
+			Redis selects an eligible key based on its approximate LRU algorithm.
+			Use case: When you want to protect keys without expiration and only evict temporary data.
+		D. allkeys-lfu
+			LFU stands for Least Frequently Used. Redis considers how frequently keys are accessed.
+			Unlike LRU, LFU focuses on access frequency rather than simply recency.
+			Use case: Applications where frequently accessed data should remain cached even if it hasn't been accessed in the last few seconds.
+		E. volatile-ttl
+			Redis only considers keys that have an expiration time. Among eligible keys, it prefers those with the shortest remaining TTL.
+			Use case: When you prefer evicting temporary keys that are already close to expiration.
+	
+	5.3 Complete comparison
+		Policy			Which keys can be evicted?		Selection criteria
+		
+		noeviction		None					Reject writes needing memory
+		allkeys-lru		All keys				Least recently used
+		volatile-lru		Keys with TTL				Least recently used
+		allkeys-lfu		All keys				Least frequently used
+		volatile-ttl		Keys with TTL				Shortest remaining TTL
+		
+		Two additional policies worth knowing:
+			- volatile-lfu: Least frequently used among keys with TTL.
+			- allkeys-random: Randomly selects keys from all keys.
+			
+		LRU vs LFU
+			Suppose a product was accessed 1,000 times yesterday but hasn't been accessed today.
+			Another product was accessed 10 times in the last minute.
+				- LRU considers how recently each key was accessed.
+				- LFU considers how frequently each key is accessed.
+				
+			Redis uses approximations for both policies rather than maintaining perfectly ordered lists.
+			
+	Important distinction: Expiration vs Eviction
+			Expiration				Eviction
+			
+			
+			Based on TTL				Based on memory pressure
+			Key reaches its expiration time		Redis needs to free memory
+			Can happen without memory pressure	Happens when the configured memory limit is reached and an applicable policy is used
+			Time-based				Policy-based
+	
+	Also, maxmemory is not a guarantee that total Redis process memory will never exceed that number. Redis has additional memory overhead, and some replication and persistence buffers may be excluded from the dataset memory accounting.
+	
+6. Common Caching Problems
+	There are four important problems:
+		1. Cache Penetration.
+		2. Cache Breakdown.
+		3. Cache Avalanche.
+		4. Cache Stampede.
+	
+	6.1 Cache Penetration
+		Cache penetration happens when an application repeatedly requests data that doesn't exist in the database. The requested key is not found in Redis.
+		The application queries PostgreSQL. But PostgreSQL also doesn't have that record. This can happen repeatedly.
+		For each request:
+			1. Redis returns a cache miss.
+			2. PostgreSQL is queried.
+			3. PostgreSQL returns no record.
+			4. Redis remains empty.
+			5. The next request repeats the same process.
+		
+		How do we prevent cache penetration?
+			Solution 1: Cache null values
+				If the database returns no record, cache a special marker. SET device:999999 "__NOT_FOUND__" EX 60
+				Now subsequent requests can find this marker in Redis and avoid querying PostgreSQL again.
+				Use a short TTL because a record that doesn't exist now may be created later.
+			
+			Solution 2: Bloom Filter
+				A Bloom Filter is a probabilistic data structure that can quickly tell you whether an element is definitely absent or possibly present.
+				Your application can skip the PostgreSQL query.
+				Important:
+					- Bloom Filter can produce false positives.
+					- It does not produce false negatives under normal operation when correctly maintained.
+					- It does not store the actual record.
+				
+				Redis supports Bloom Filters through the RedisBloom module.
+				
+			Solution 3: Input validation
+				Reject obviously invalid device IDs before querying Redis or PostgreSQL. This is useful, but it cannot replace null caching or Bloom Filters for all cases.
+				
+	6.2 Cache Breakdown (Hot Key Expiration)
+		Cache breakdown happens when a very frequently accessed key expires or becomes unavailable. 
+		This creates a sudden load spike.
+		How do we prevent cache breakdown?
+			Solution 1: Mutex / Distributed Lock
+				Only one request should regenerate the missing cache entry. Other requests wait briefly or use a fallback.
+				Redis supports atomic lock acquisition using: SET lock:device:101 "worker-1" NX PX 10000
+				NX: Create only if the lock doesn't exist.
+				PX 10000: Lock expires after 10 seconds.
+				The lock owner fetches PostgreSQL data and repopulates the cache.
+				In production, release the lock safely using an ownership check, typically with Lua scripting. 
+				A blind DEL could delete a lock acquired by another worker after the original lock expired.
+			
+			Solution 2: Logical expiration / Background refresh
+				Keep serving the previously cached value while a background worker refreshes it.
+				Refresh starts before 30 sec of expiration
+			
+			Solution 3: Never expire certain hot keys automatically
+				For carefully selected data, you can refresh the cache proactively rather than relying on expiration.
+	
+	6.3 Cache Avalanche
+		Cache avalanche happens when a large number of cache keys expire around the same time.
+		How do we prevent cache avalanche?
+			Solution 1: Randomized TTL (TTL Jitter)
+				Instead of giving every key the same expiration time, add a random amount.
+			
+			Solution 2: Prewarming the cache
+				Load important data into Redis before expected high-traffic periods.
+			
+			Solution 3: Avoid mass cache invalidation
+				Don't delete huge numbers of keys unnecessarily during deployments or configuration changes.
+			
+			Solution 4: Rate limiting and database protection
+				Protect PostgreSQL from sudden bursts using rate limits, concurrency limits, and controlled database connection pools.
+				
+	6.4 Cache Stampede
+		Cache stampede happens when multiple concurrent requests attempt to regenerate the same missing or expired cache entry.
+		How is it different from breakdown?
+			Breakdown					Stampede
+			
+			Popular cached key becomes unavailable		Multiple concurrent requests regenerate a missing key
+			Describes the hot-key expiration problem	Describes the concurrent regeneration behaviour
+			Can trigger a stampede				Is a common consequence of breakdown
+		
+		How do we prevent cache stampede?
+			Solution 1: Single-flight request deduplication
+				Within a single application instance, only one request fetches a particular missing key.
+			Solution 2: Distributed lock
+				Use a Redis lock so that only one application instance regenerates the key.
+			Solution 3: Serve stale data
+				If slightly outdated data is acceptable, serve the previous cached value while one process refreshes it.
+			Solution 4: TTL jitter
+				Randomize expiration times to reduce synchronized expiration.
+	
+	6.5 All four caching problems compared
+		Problem					Main cause					Typical solution
+		
+		Cache Penetration			Requested data doesn't exist			Null caching, Bloom Filter
+		Cache Breakdown				One hot key expires				Distributed lock, proactive refresh
+		Cache Avalanche				Many keys expire together			TTL jitter, prewarming
+		Cache Stampede				Many requests regenerate the same key		Single-flight, lock, stale serving
+		
+		Penetration: Asking for something that doesn't exist.
+		Breakdown: One very popular key disappears.
+		Avalanche: Many keys disappear together.
+		Stampede: Many requests rush to rebuild the same missing key.
+		
+7. How to Prevent Stale Cache Data?
+	Strategy 1: Cache Invalidation
+		After updating PostgreSQL, delete the Redis key.
+	Strategy 2: Update Redis After Database Commit
+		Instead of deleting the cache, update it with the new value.
+	Strategy 3: Use TTL
+		Set a reasonable expiration time.
+	Strategy 4: Event-Driven Invalidation
+		Suppose there are two services with one cache. Service A updates a device. It publishes an event: {"event" : "Device updated" , "deviceid" : 101}
+		Other services receive the event and invalidate their corresponding cache entries.
+		A reliable implementation can use the Transactional Outbox pattern:
+			1. Update the device in PostgreSQL.
+			2. Insert an event into an outbox table in the same transaction.
+			3. A background publisher sends the event.
+			4. Consumers invalidate or refresh Redis.
+			
+	
+	To prevent stale cache data, I would generally use Cache Aside with cache invalidation. After a successful database update, I would delete the corresponding Redis key so the next request fetches fresh data. For distributed systems, I could use event-driven invalidation with a reliable event delivery mechanism. TTL provides an additional safety mechanism.
+	
+8. How Do You Decide TTL?
+	TTL should be determined by how frequently data changes, how stale it can safely become, and the cost of fetching it again.
+	
+	8.1 Example TTL decisions
+		Data					Example TTL			Reason
+		
+		OTP					60 seconds			Security and validity requirement
+		User session				30 minutes			Session expiration policy
+		Device status				15–30 seconds			Status can change frequently
+		Company settings			5–15 minutes			Changes relatively infrequently
+		Product catalog				5–10 minutes			Balance freshness and DB load
+		Public static configuration		1 hour				Changes infrequently
+	
+	8.2 Four factors for deciding TTL
+		Factor 1: Data update frequency
+			If data changes frequently, use a shorter TTL.
+		Factor 2: How stale can data be?
+			You might need strict consistency and shouldn't blindly rely on a long-lived cache.
+		Factor 3: Database query cost
+			Caching the result for a reasonable period may provide substantial performance benefits.
+		Factor 4: Memory consumption
+			Longer TTLs generally mean cached keys remain available longer, potentially increasing memory consumption.
+	
+	8.3 TTL decision formula: A practical way to think
+		There isn't a universal mathematical formula for TTL. Instead, think of it as a trade-off:
+		Short TTL
+			- Fresher data
+			- More cache misses
+			- More database queries
+		  
+		  Long TTL
+			- Better cache reuse
+			- Fewer database queries
+			- Higher risk of stale data
+			- Potentially more memory usage
+			
+	
+	I decide TTL based on data update frequency, acceptable staleness, database query cost, and memory consumption. Frequently changing data should have a shorter TTL, while relatively static data can have a longer TTL. For critical data requiring immediate consistency, I would combine invalidation or versioning with an appropriate expiration policy rather than relying only on TTL.
+	
+9. Questions
+
+	Q1. What is Cache Aside?
+	Q2. What is cache invalidation?
+	Q3. What happens when a cache expires?
+	Q4. What is LRU?
+	Q5. What is cache stampede?
+	Q6. How do you prevent stale cache data?
+	Q7. How do you decide TTL?
