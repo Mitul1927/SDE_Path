@@ -1,0 +1,535 @@
+Phase 4: Redis Persistence & Replication
+
+What happens if your Redis server crashes at 2 AM and all your data disappears?
+Redis provides two important capabilities to address this:
+	1. Persistence: Save data to disk so it can be recovered after a restart.
+	2. Replication: Maintain copies of data on other Redis servers.
+	
+These solve different problems. Persistence helps with recovery after a restart. Replication helps with availability and read scaling.
+
+1. Redis Persistence
+	1.1 What is persistence?
+		Persistence means storing data in a durable storage medium, usually a disk, so that it can survive a Redis process restart.
+		Redis primarily stores its working dataset in RAM. RAM is volatile. If the Redis process crashes, its in-memory data is lost. 
+		But Redis can periodically or continuously save data to disk. This is called Redis Persistence.
+		
+		Without persistence
+			Imagine Redis contains: SET user:101 "John", SET user:102 "Alex", SET user:103 "Mike"
+			All three keys are stored in memory. Now Redis crashes. If there is no other recoverable copy of the data, those keys are lost.
+		
+		With persistence
+			Redis periodically or continuously writes recoverable information to disk. When Redis restarts, it can load that information and reconstruct its dataset.
+		
+		There are two major persistence mechanisms:
+			1. RDB (Redis Database Snapshot).
+			2. AOF (Append Only File).
+
+2. RDB (Redis Database Snapshot)
+	2.1 What is RDB?
+		RDB is a Redis persistence mechanism that saves a snapshot of the dataset at a particular point in time.
+		If Redis crashes before another snapshot is created, the latest snapshot won't contain the new data. That's the important limitation of RDB.
+		RDB stores a point-in-time representation of your dataset, not every individual write operation.
+	
+	2.2 How does RDB work?
+		Redis uses the BGSAVE command to create a background snapshot.
+			BGSAVE
+		Conceptually, the process is:
+			1. Redis initiates a background save.
+			2. A child process is created.
+			3. The child process writes the dataset to an RDB file.
+			4. The snapshot is saved to disk.
+			5. Redis continues serving normal client requests.
+		
+		Redis uses the operating system's copy-on-write mechanism during this process.
+	
+	2.3 RDB configuration
+		Redis supports automatic snapshots based on time and the number of changes.
+		A typical configuration might look like: save 900 1, save 300 10, save 60 10000
+		Meaning:
+			Configuration	Meaning
+			save 900 1	Save if at least 1 key changes within 900 seconds
+			save 300 10	Save if at least 10 keys change within 300 seconds
+			save 60 10000	Save if at least 10,000 keys change within 60 seconds
+			
+			These are alternative conditions. If any configured condition is met, Redis can trigger a snapshot.
+		
+		You can inspect the current configuration:
+			CONFIG GET save
+		The default filename is generally:
+			dump.rdb
+		The file is written to Redis's configured working directory. Check it using:
+			CONFIG GET dir
+			CONFIG GET dbfilename
+			
+	2.4 What happens when Redis crashes with RDB enabled?
+		Redis loads the latest valid snapshot when restarted after crashing.
+		
+	2.5 Advantages of RDB
+		Compact backup files.
+		Faster recovery in many workloads.
+		Useful for periodic backups.
+		Suitable for transferring datasets between servers.
+		Background snapshotting allows Redis to continue serving requests.
+	
+	2.6 Disadvantages of RDB
+		1. Recent writes can be lost between snapshots.
+		2. Snapshotting can create CPU, disk I/O, and memory overhead.
+		3. Large datasets may require significant resources during snapshot creation.
+		
+3. AOF (Append Only File)
+	3.1 What is AOF?
+		AOF stands for Append Only File.
+		Unlike RDB, which saves snapshots of the dataset, AOF records write operations that modify the dataset.
+		Think of it as maintaining a transaction-like log of Redis commands.
+		For example, your application executes: SET user:101 "John", SET user:102 "Alex", INCR page_views, DEL user:102.
+		Redis records the corresponding write operations in its AOF file. When Redis restarts, it replays the recorded operations to reconstruct the dataset.
+		
+		Notice that Redis doesn't need to save every intermediate state of every key. It replays the recorded commands to reconstruct the final state.
+	
+	3.2 How does AOF work?
+		The basic workflow:
+			1. Client sends a write command.
+			2. Redis executes the command.
+			3. The command is appended to the AOF log.
+			4. AOF data is synchronized to disk according to the configured fsync policy.
+			5. During recovery, Redis replays the log.
+		The exact durability guarantee depends on the fsync configuration.
+	
+	3.3 AOF configuration
+		Enable AOF: appendonly yes
+		Redis generally stores AOF files in an appendonlydir directory in modern versions.
+		You can inspect the configuration: CONFIG GET appendonly, CONFIG GET appenddirname, CONFIG GET appendfsync
+		Important: AOF fsync policies
+		Fsync means flushing buffered data to durable storage.
+		
+		Redis supports three important policies.
+			Policy		Meaning							Durability
+			
+			always		Fsync after every write operation			Stronger durability, slower
+			everysec	Fsync approximately once per second			Small recent-loss window
+			no		Let the operating system decide when to flush		Less predictable
+		
+		1. appendfsync always
+			Redis requests an fsync for every write operation. This offers stronger durability, but it can reduce write performance.
+		2. appendfsync everysec
+			Redis synchronizes the AOF approximately once per second. This is a popular balance between performance and durability.
+			If the server crashes, approximately the most recent second of writes may be lost, although the exact outcome depends on the failure and storage behaviour.
+		3. appendfsync no
+			Redis does not explicitly control fsync timing for each write. The operating system decides when to flush buffered data.
+			This may improve performance, but durability is less predictable.
+			
+	3.4 What is AOF Rewrite?
+		AOF Rewrite creates a more compact representation of the current dataset.
+		Instead of retaining every historical operation, Redis generates the commands needed to reconstruct the current state.
+		For example: user:101 has various values changed in history like jane, mona, john. so what's the real value that's where AOF Rewrite comes in.
+		The rewritten file is much smaller.
+		
+		How does AOF Rewrite work?
+			Redis uses:
+				BGREWRITEAOF
+			The process:
+				1. Redis starts a background rewrite.
+				2. A child process generates a compact representation of the current dataset.
+				3. Redis continues accepting client writes.
+				4. New write operations are tracked while the rewrite runs.
+				5. Redis incorporates those changes into the new AOF files.
+				6. The new AOF representation replaces the old one.
+		
+		Important distinction
+			AOF Rewrite does not simply delete old lines from the file. It generates a new sequence of operations that reconstructs the current dataset.
+			Modern Redis versions also support multi-part AOF, where a base file and incremental AOF files are managed together using a manifest.
+			
+4. RDB vs AOF
+	Feature				RDB				AOF
+	
+	Full form			Redis Database Snapshot		Append Only File
+	Storage method			Point-in-time snapshots		Write-operation log
+	Data recording			Periodically			On writes
+	Recovery			Load snapshot			Replay operations
+	Data loss risk			Changes since last snapshot	Depends on fsync policy
+	File size			Generally compact		Can grow larger before rewrite
+	Recovery speed			Often faster			Can be slower for large logs
+	Backup suitability		Excellent			Also useful
+	Rewrite required		No AOF-style rewrite		Yes, periodically
+	
+	Let's understand the key difference with an example.
+		Suppose Redis receives these commands:
+			SET user:101 "John"
+			SET user:102 "Alex"
+			SET user:103 "Mike"
+			DEL user:102
+		
+		RDB approach:
+			Redis saves the dataset as it exists at snapshot time:
+				user:101 → John
+				user:103 → Mike
+				
+		AOF approach:
+			Redis records the write operations:
+				SET user:101 "John"
+				SET user:102 "Alex"
+				SET user:103 "Mike"
+				DEL user:102
+		
+		During recovery, these operations are replayed.
+		
+	Which one is better?
+		It depends on your requirements.
+			- Choose RDB when you want compact snapshots and convenient backups.
+			- Choose AOF when you want more configurable durability and a smaller potential recovery-point gap.
+			- Use both when you want a combination of snapshot backups and AOF-based recovery.
+			
+	RDB takes periodic snapshots of the Redis dataset, whereas AOF records write operations that can be replayed during recovery. RDB generally produces compact files and offers fast recovery, but recent writes since the last snapshot may be lost. AOF provides configurable durability through fsync policies, but its files can grow and recovery may take longer. Redis supports using both mechanisms together.
+	
+5. Redis Data Recovery
+	Now let's understand what happens when Redis crashes and restarts.
+	Both RDB and AOF are enabled.
+	Now the Redis process crashes.
+	What happens when we restart it?
+	
+	5.1 Recovery process
+		Redis process crashes -> Redis server starts again -> Check persistence files (RDB Snapshot file  or AOF Operation log) -> Reconstruct Redis dataset -> Recovered Redis starts accepting normal requests
+		The recovery source depends on the persistence configuration.
+			Configuration		Recovery behaviour
+			
+			RDB only		Load latest valid snapshot
+			AOF only		Replay AOF
+			Both enabled		Prefer AOF
+			Neither enabled		Dataset is lost after process restart
+			
+		AOF recovery may also involve loading its base snapshot and incremental files in modern multi-part AOF configurations.
+	
+	5.2 What if the AOF file is corrupted?
+		Redis provides a repair utility: redis-check-aof --fix appendonly.aof
+		The exact file path depends on your Redis configuration and AOF format.
+		Be careful: repairing a corrupted AOF can discard an invalid trailing portion of the log. Always preserve a backup before attempting repair.
+	
+	5.3 Important production consideration
+		Persistence does not mean that Redis data is absolutely guaranteed to survive every failure.
+		For example:
+			- A disk can fail.
+			- AOF writes may not yet have been synchronized.
+			- An RDB snapshot may be outdated.
+			- A persistence operation may fail.
+			- A backup can itself become corrupted.
+		
+		For critical systems, use persistence together with replication, backups, monitoring, and a recovery plan.
+
+6. Copy-on-Write: How Does Redis Create Snapshots?
+	You already know that Redis uses BGSAVE to create a background snapshot. But how can Redis save a snapshot without blocking all normal commands?
+		The answer involves Copy-on-Write (COW).
+	
+	6.1 What is Copy-on-Write?
+		Copy-on-Write is an operating-system memory management technique. 
+		Instead of immediately copying all memory when a process is forked, the parent and child initially share memory pages.
+		A copy is created when one of the processes modifies a shared page.
+		Redis example
+			Suppose Redis has 1 GB of data in memory.
+			when Redis Executes: BGSAVE
+			It creates a child process.
+			Initially, the parent and child share memory pages.
+			Now:
+				- The child process writes the snapshot to disk using its view of the dataset.
+				- The parent Redis process continues handling client requests.
+				- If the parent modifies a shared memory page, the operating system creates a private copy for the parent.
+			
+		Why is this useful?
+			Redis doesn't need to copy the entire dataset immediately when creating the child process.
+			It can share existing memory pages initially.
+			However, if many pages are modified during snapshotting, memory usage can increase significantly.
+		
+		Interview point: BGSAVE is non-blocking for normal command execution in the sense that the parent continues serving requests, but fork() itself can introduce latency, and Copy-on-Write can create memory overhead.
+		
+7. Redis Replication
+	Persistence protects data through disk-based recovery.
+	But what if the Redis server itself becomes unavailable? Even if your data is safely persisted, your application cannot access Redis while the server is unavailable.
+	
+	7.1 What is Redis Replication?
+		Redis Replication is the process of maintaining copies of data across multiple Redis servers.
+		Redis commonly uses a Primary-Replica architecture.
+		Previously, this architecture was often called Master-Slave.
+		Modern Redis terminology uses:
+			- Primary
+			- Replica
+			
+		Primary-Replica architecture
+			Suppose we have three Redis servers:
+				- Redis Server A: Primary.
+				- Redis Server B: Replica.
+				- Redis Server C: Replica.
+				
+			The primary handles writes and propagates changes to its replicas. The replicas maintain copies of the primary's dataset.
+			Replication is generally asynchronous, so the replicas may temporarily lag behind the primary.
+	
+	7.2 Why do we need replication?
+		There are three major reasons.
+		
+		Reason 1: High Availability
+			Suppose your primary Redis server crashes. If replicas are available, a failover mechanism can promote one of them to become the new primary.
+			Your application can then continue working with the new primary.
+		
+		Reason 2: Read Scalability
+			Imagine your application receives:
+				- 10,000 read requests per second.
+				- 500 write requests per second.
+			
+			The primary may become overloaded with read traffic. You can distribute read operations across replicas.
+			Important: Replicas may return slightly outdated data because replication is asynchronous.
+		
+		Reason 3: Redundancy
+			Having multiple Redis servers with copies of the dataset reduces dependence on a single server. If one server fails, another may still have the data.
+			However, replication is not a substitute for backups. Accidental deletions and incorrect writes can also be replicated.
+			
+8. How Does Redis Replication Work Internally?
+	This is where we go a little deeper into Redis internals.
+	Suppose you have: 
+		Primary: 192.168.1.10:6379
+		Replica: 192.168.1.11:6379
+	
+	You configure the replica to follow the primary. - REPLICAOF 192.168.1.10 6379
+	Now the replica starts synchronizing with the primary.
+	
+	8.1 Initial Synchronization (Full Sync)
+		Imagine the primary already contains 1 million keys. A newly connected replica has no copy of that dataset. It needs to obtain the primary's current data.
+		Redis performs an initial synchronization.
+		The simplified process:
+			1. Replica connects to the primary.
+			2. Replica requests synchronization.
+			3. Primary starts generating an RDB snapshot.
+			4. Primary sends the snapshot to the replica.
+			5. Replica loads the snapshot.
+			6. Primary sends subsequent write operations that occurred during synchronization.
+			7. Replica applies those operations.
+		
+		This ensures that the replica catches up with the primary.
+		
+		Important detail
+			Redis doesn't necessarily stop serving writes while the snapshot is being transferred. 
+			It tracks changes that occur during synchronization and sends them to the replica afterward.
+	
+	8.2 Partial Resynchronization
+		Now imagine the replica was already synchronized.
+		Its network connection temporarily breaks. The connection comes back after five seconds. Does Redis need to transfer the entire dataset again? Not necessarily.
+		Redis supports partial resynchronization, often called PSYNC.
+		The primary maintains a replication backlog containing recent replication data.
+		If the replica reconnects with a valid replication ID and offset, and the required data is still available in the backlog, Redis can send only the missing changes.
+		
+		If the required replication history is unavailable, Redis needs to perform a full synchronization again.
+		Full Sync vs Partial Sync
+		Feature			Full Sync								Partial Sync
+		
+		Purpose			Initial synchronization or recovery when history is unavailable		Recover from a short disconnection
+		Data transferred	Full dataset snapshot plus subsequent changes				Missing replication changes
+		Resource usage		Generally higher							Generally lower
+		Mechanism		RDB-based synchronization						Replication backlog and offsets
+		
+9. Is Redis Replication Synchronous or Asynchronous?
+	By default, Redis replication is asynchronous. This means the primary does not normally wait for every replica to acknowledge every write before returning success to the client.
+	
+	What is the problem with asynchronous replication?
+		Imagine this sequence:
+			1. Primary receives a write.
+			2. Primary returns success.
+			3. Replica hasn't received the write yet.
+			4. Primary crashes.
+	
+		The replica might not contain the latest write.
+		If that replica becomes the new primary, the acknowledged write could be lost. This is an important trade-off.
+		Redis prioritizes efficient write processing, but asynchronous replication means replication alone does not guarantee zero data loss.
+	
+	9.1 Can we wait for replica acknowledgements?
+		Redis provides a command called: WAIT
+		This asks Redis to wait until at least two replicas acknowledge the replication offset associated with previous writes on that connection, or until the timeout of 1,000 milliseconds is reached.
+		Important: WAIT improves practical data safety but does not turn Redis into a strongly consistent synchronous replication system. It does not guarantee that acknowledged writes will survive every failover scenario.
+		There is also WAITAOF in supported Redis versions, which can wait for AOF fsync acknowledgements from local and/or replica servers.
+		
+10. What is Replication Lag?
+	Replication lag is the delay between a write being applied on the primary and becoming available on a replica.
+	Suppose the primary receives: SET device:101 "offline"
+	The primary now contains: device:101 → offline
+	But the replica still contains: device:101 → online. For a short period, the replica is behind. That's replication lag.
+	
+	Why does replication lag happen?
+		Common reasons:
+			1. Network latency.
+			2. High write traffic on the primary.
+			3. Slow replica processing.
+			4. CPU or memory pressure.
+			5. Large synchronization operations.
+			6. Disk or persistence pressure on replicas.
+	
+	Why is replication lag dangerous?
+		The user might read outdated data.
+	
+	How do we handle replication lag?
+		Common approaches:
+			- Route consistency-sensitive reads to the primary.
+			- Monitor replication offsets and lag.
+			- Avoid reading from replicas immediately after a write when read-after-write consistency is required.
+			- Use WAIT where appropriate, understanding its limitations.
+			- Reduce network and processing bottlenecks.
+	
+	Replication lag is the delay between changes being applied on the primary and being replicated to a replica. Since Redis replication is asynchronous by default, replicas may temporarily return stale data. We can handle this by routing consistency-sensitive reads to the primary and monitoring replica synchronization.
+	
+11. What Happens If the Primary Redis Server Goes Down?
+	Can a replica automatically become the new primary? The answer depends on your Redis architecture.
+	
+	11.1 Replication alone does not guarantee automatic failover
+		If you configure a primary and two replicas using basic Redis replication, Redis does not automatically promote a replica just because the primary crashes.
+		Two important Redis solutions are:
+			1. Redis Sentinel.
+			2. Redis Cluster.
+	
+	11.2 Redis Sentinel
+		Redis Sentinel provides high availability for Redis deployments that use primary-replica replication.
+		Its responsibilities include:
+			- Monitoring Redis servers.
+			- Detecting primary failures.
+			- Coordinating failover.
+			- Promoting a replica to primary.
+			- Informing clients about the new primary.
+		
+		How does Sentinel failover work?
+			Suppose: Primary: Redis A, Replica: Redis B, Replica: Redis C
+			Now Redis A crashes.
+				The simplified failover process:
+					1. Sentinels monitor the Redis instances.
+					2. They determine that the primary is unavailable.
+					3. They reach the required agreement that the primary is objectively down.
+					4. A Sentinel is elected to coordinate failover.
+					5. An eligible replica is selected.
+					6. That replica is promoted to primary.
+					7. Other replicas are reconfigured to follow the new primary.
+					8. Clients discover the new primary through Sentinel-aware discovery.
+					
+		Important: How many Sentinels do we need?
+			A common production arrangement uses three Sentinel instances on separate machines or failure domains.
+			This helps avoid a single Sentinel becoming a single point of failure.
+			Sentinel is not the same thing as a Redis data replica. It monitors and coordinates failover.
+	
+	11.3 Redis Cluster
+		Redis Cluster is another approach.
+		It provides:
+			- Data sharding across multiple primary nodes.
+			- Replication.
+			- Automatic failover.
+			- Horizontal scaling.
+		
+		Unlike Sentinel, which primarily provides high availability for a non-sharded deployment, Redis Cluster also distributes data across multiple primary nodes.
+
+12. Can Redis Replicas Accept Writes?
+	By default, Redis replicas are read-only.
+	This means:
+		- Primary accepts writes and reads.
+		- Replica accepts reads.
+		- Replica rejects normal write commands.
+	Example:
+		On the primary: 
+			SET user:101 "John"
+		T	his succeeds.
+		On the replica: 
+			GET user:101
+			This succeeds.
+			But: SET user:102 "Alex"
+			Normally returns an error: READONLY You can't write against a read only replica.
+	
+	Why are replicas read-only?
+		Because Redis replication is designed around the primary being the source of writes.
+		If every replica accepted independent writes, coordinating all those changes would become much more complicated.
+		Redis avoids that problem by defaulting replicas to read-only.
+	
+	Can we change this behaviour?
+		Redis has a configuration option: replica-read-only yes
+		You can technically configure: CONFIG SET replica-read-only no
+	
+	But allowing writes to replicas is generally discouraged.
+	Such local writes aren't propagated back to the primary and can be lost or overwritten during resynchronization.
+	
+	Redis replicas are read-only by default. The primary handles write operations and propagates changes to replicas. Replicas can serve read requests, helping distribute read traffic. Although Redis allows the read-only restriction to be disabled, accepting independent writes on replicas is generally not recommended.
+
+13. Practical Redis Replication Commands
+	13.1 Check whether a Redis server is primary or replica
+		INFO replication
+		A primary might show:
+			role:master
+			connected_slaves:2
+		A replica might show:
+			role:slave
+			master_host:192.168.1.10
+			master_port:6379
+			master_link_status:up
+			
+		The output may use legacy master and slave field names for compatibility, even though modern terminology is primary and replica.
+	
+	13.2 Configure a replica
+		Connect to the Redis instance that you want to make a replica.
+		Execute: REPLICAOF 192.168.1.10 6379
+		Now it follows the primary at that address.
+	
+	13.3 Check replication status
+		INFO replication
+	
+	
+	Useful information includes:
+		Field				Meaning
+		
+		role				Primary or replica
+		connected_slaves		Number of connected replicas on primary
+		master_host			Primary address on replica
+		master_link_status		Connection status
+		master_repl_offset		Replication offset
+		slave_repl_offset		Replica replication offset
+		repl_backlog_active		Whether replication backlog is active
+	
+	13.4 Manually promote a replica
+		If you need to promote a replica manually:
+			REPLICAOF NO ONE
+		
+		This stops it from following its previous primary and makes it an independent primary.
+		This is a manual operation, not a complete failover orchestration mechanism.
+	
+	13.5 Check server role
+		ROLE
+		This gives information about the current Redis server's role.
+
+14. Persistence vs Replication
+	This is probably the most important comparison in this entire phase.
+	Persistence: RAM -> Disk
+	Replication: Primary -> Replica
+	
+	Feature					Persistence						Replication
+	
+	Main purpose				Data recovery						Availability and read scaling
+	Storage					Disk							Another Redis server
+	Protects against process restart	Yes, if data was persisted				May help
+	Protects against hardware failure	If backup is on separate reliable storage		May help
+	Supports read scaling			No							Yes
+	Supports failover			No, not by itself					With Sentinel or Cluster
+	Example					RDB, AOF						Primary-replica
+	
+	
+	Remember this distinction
+		Persistence = Save data for recovery.
+		Replication = Maintain copies across servers.
+		Sentinel = Monitor servers and coordinate failover.
+		Cluster = Distribute data and provide high availability.
+		
+15. Questions
+	Q1. What is Redis persistence?
+	Q2. RDB vs AOF?
+	Q3. What happens if Redis crashes?
+	Q4. What is Redis replication?
+	Q5. What happens if the primary Redis server goes down?
+	Q6. Can replicas accept writes by default?
+	Q7. What is BGSAVE?
+	Q8. What is BGREWRITEAOF?
+	Q9. What is fsync?
+	Q10. What is Copy-on-Write?
+	Q11. What is replication lag?
+	Q12. What is PSYNC?
+	Q13. What is replication backlog?
+	Q14. What is Sentinel?
+	Q15. What is failover?
+	Q16. What is read scaling?
+	Q17. Does replication guarantee zero data loss?
+	Q18. Is replication a backup?
